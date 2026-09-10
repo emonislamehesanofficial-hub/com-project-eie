@@ -7,6 +7,9 @@ const fs = require('fs');
 
 const app = express();
 
+// Render / Reverse Proxy Support (Fixes HTTP to HTTPS issue)
+app.set('trust proxy', 1);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -32,7 +35,7 @@ if (MONGO_URI) {
         .then(() => console.log("MongoDB Database Connected Successfully!"))
         .catch(err => console.error("MongoDB Connection Error:", err));
 } else {
-    console.warn("⚠️ MONGO_URI missing! Set process.env.MONGO_URI on Render Environment Variables.");
+    console.warn("⚠️ MONGO_URI missing in Environment Variables!");
 }
 
 // Database Schemas
@@ -69,7 +72,7 @@ const configSchema = new mongoose.Schema({
     }
 });
 
-// Sound Schema (Stored in MongoDB for zero data loss)
+// Sound Schema
 const soundSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     title: { type: String, required: true },
@@ -83,7 +86,7 @@ const User = mongoose.model('User', userSchema);
 const Config = mongoose.model('Config', configSchema);
 const Sound = mongoose.model('Sound', soundSchema);
 
-// Multer Storage Setup for Audio and Image Uploads
+// Multer Setup for File Uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -116,6 +119,12 @@ const checkAdminAuth = (req, res, next) => {
     }
     next();
 };
+
+// Helper for dynamic HTTPS base URL
+function getBaseUrl(req) {
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    return `${protocol}://${req.get('host')}`;
+}
 
 // ==========================================
 // 📱 CLIENT APIs (For Android App)
@@ -199,7 +208,7 @@ app.get('/api/sounds', async (req, res) => {
             sounds: sounds
         });
     } catch (err) {
-        res.status(500).json({ status: false, message: "Error fetching sounds" });
+        res.status(500).json({ status: false, message: "Error fetching sounds: " + err.message });
     }
 });
 
@@ -316,7 +325,7 @@ app.post('/api/upload-sound', checkAdminAuth, upload.fields([
       return res.status(400).json({ status: false, message: "Audio and Thumbnail files are required!" });
     }
 
-    const host = req.protocol + '://' + req.get('host');
+    const host = getBaseUrl(req);
     const audioUrl = `${host}/public/uploads/${files.audio[0].filename}`;
     const thumbnailUrl = `${host}/public/uploads/${files.thumbnail[0].filename}`;
 
@@ -371,10 +380,12 @@ app.get('/admin/api/users', checkAdminAuth, async (req, res) => {
     });
 });
 
-// ==========================================
-// 🎨 MATERIAL UI WEB ADMIN DASHBOARD
-// ==========================================
+// Root Route Redirect to Admin Panel
+app.get('/', (req, res) => {
+    res.redirect('/admin');
+});
 
+// WEB ADMIN DASHBOARD PANEL
 app.get('/admin', (req, res) => {
     const adminKey = req.query.key || ADMIN_KEY;
     
@@ -403,24 +414,20 @@ app.get('/admin', (req, res) => {
         * { box-sizing: border-box; font-family: 'Roboto', sans-serif; }
         body { background-color: var(--bg-color); color: var(--text-main); margin: 0; padding: 0; }
         
-        /* Sidebar Nav */
         .layout { display: flex; min-height: 100vh; }
         .sidebar { width: 260px; background-color: #020617; border-right: 1px solid var(--border-color); padding: 24px 16px; }
         .sidebar h2 { font-size: 20px; color: var(--accent-blue); display: flex; align-items: center; gap: 10px; margin-bottom: 32px; }
         .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; color: var(--text-sub); text-decoration: none; border-radius: 8px; font-weight: 500; cursor: pointer; margin-bottom: 8px; transition: all 0.2s; }
         .nav-item:hover, .nav-item.active { background-color: var(--card-bg); color: var(--accent-blue); }
         
-        /* Main Content */
         .content { flex: 1; padding: 32px; overflow-y: auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
         .header h1 { font-size: 24px; font-weight: 700; margin: 0; }
         
-        /* Material Cards */
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1f)); gap: 24px; }
         .card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
         .card h3 { margin-top: 0; font-size: 18px; color: var(--text-main); display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
         
-        /* Form Inputs & Buttons */
         label { display: block; font-size: 13px; color: var(--text-sub); margin-bottom: 6px; margin-top: 12px; }
         input, select, textarea { width: 100%; padding: 10px 14px; background-color: #0F172A; border: 1px solid var(--border-color); border-radius: 8px; color: white; font-size: 14px; outline: none; }
         input:focus { border-color: var(--accent-blue); }
@@ -431,14 +438,12 @@ app.get('/admin', (req, res) => {
         .btn-green { background-color: var(--accent-green); color: white; }
         .btn-red { background-color: var(--accent-red); color: white; }
         
-        /* Data Tables */
         table { width: 100%; border-collapse: collapse; margin-top: 16px; }
         th, td { text-align: left; padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 14px; }
         th { color: var(--text-sub); font-weight: 500; }
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
         .badge-active { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
         
-        /* Tab Sections */
         .section { display: none; }
         .section.active { display: block; }
         
@@ -448,7 +453,6 @@ app.get('/admin', (req, res) => {
     <body>
 
     <div class="layout">
-      <!-- Sidebar Nav -->
       <div class="sidebar">
         <h2><span class="material-icons-round">dashboard</span> Admin Portal</h2>
         <div class="nav-item active" onclick="switchTab('sounds')"><span class="material-icons-round">library_music</span> Sound Library</div>
@@ -457,17 +461,14 @@ app.get('/admin', (req, res) => {
         <div class="nav-item" onclick="switchTab('bans')"><span class="material-icons-round">block</span> Ban System</div>
       </div>
 
-      <!-- Main Content Area -->
       <div class="content">
         <div class="header">
           <h1 id="page-title">🎵 Sound Tracks & Audio Cloud</h1>
           <button class="btn-blue" onclick="loadDashboardData()"><span class="material-icons-round">refresh</span> Sync Server Data</button>
         </div>
 
-        <!-- 1. SOUND LIBRARY TAB -->
         <div id="tab-sounds" class="section active">
           <div class="grid">
-            <!-- Upload Sound Form -->
             <div class="card">
               <h3><span class="material-icons-round">cloud_upload</span> Upload New Sound Track</h3>
               <form id="uploadForm" onsubmit="uploadSoundTrack(event)">
@@ -487,7 +488,6 @@ app.get('/admin', (req, res) => {
               </form>
             </div>
 
-            <!-- Live Tracks List -->
             <div class="card" style="grid-column: span 2;">
               <h3><span class="material-icons-round">music_note</span> Published Sound Library</h3>
               <div id="soundsListContainer">Loading tracks...</div>
@@ -495,7 +495,6 @@ app.get('/admin', (req, res) => {
           </div>
         </div>
 
-        <!-- 2. USER KEYS TAB -->
         <div id="tab-keys" class="section">
           <div class="grid">
             <div class="card">
@@ -520,7 +519,6 @@ app.get('/admin', (req, res) => {
           </div>
         </div>
 
-        <!-- 3. APP SETTINGS TAB -->
         <div id="tab-settings" class="section">
           <div class="grid">
             <div class="card">
@@ -550,7 +548,6 @@ app.get('/admin', (req, res) => {
           </div>
         </div>
 
-        <!-- 4. BAN SYSTEM TAB -->
         <div id="tab-bans" class="section">
           <div class="card">
             <h3><span class="material-icons-round">no_cell</span> Ban Hardware ID (HWID)</h3>
@@ -591,7 +588,6 @@ app.get('/admin', (req, res) => {
           const res = await fetch('/admin/api/users', { headers: { 'x-admin-key': ADMIN_KEY } });
           const data = await res.json();
 
-          // Render Sounds
           let soundsHtml = '<table><thead><tr><th>Thumbnail</th><th>Title</th><th>Description</th><th>Action</th></tr></thead><tbody>';
           (data.sounds || []).forEach(s => {
             soundsHtml += \`
@@ -606,7 +602,6 @@ app.get('/admin', (req, res) => {
           soundsHtml += '</tbody></table>';
           document.getElementById('soundsListContainer').innerHTML = soundsHtml;
 
-          // Render Keys
           let keysHtml = '<table><thead><tr><th>Key</th><th>Expiry Date</th><th>Devices Logged</th><th>Action</th></tr></thead><tbody>';
           for (let k in data.users) {
             const u = data.users[k];
@@ -622,7 +617,6 @@ app.get('/admin', (req, res) => {
           keysHtml += '</tbody></table>';
           document.getElementById('keysTableContainer').innerHTML = keysHtml;
 
-          // Render Banned HWIDs
           let bansHtml = '<ul>';
           (data.bannedHWIDs || []).forEach(h => {
             bansHtml += \`<li style="margin-bottom: 8px;">\${h} <button class="btn-green" style="padding: 4px 8px;" onclick="unbanHWID('\${h}')">Unban</button></li>\`;
