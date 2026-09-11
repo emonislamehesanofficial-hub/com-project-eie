@@ -1,6 +1,6 @@
 // ============================================================
-// Medito Glass Backend v4 — 3D Premium Edition
-// CSS 3D transforms · Nature + Guided only
+// Medito Glass Backend v5 — MAX POWER Edition
+// Three.js + GSAP + Lottie + CSS 3D
 // ============================================================
 const express = require('express');
 const path = require('path');
@@ -115,7 +115,6 @@ if (db.guided.length === 0) {
 }
 saveDb();
 
-// ===== API =====
 app.get('/api/nature', (req, res) => res.json({ sounds: db.nature }));
 app.get('/api/guided', (req, res) => res.json({ meditations: db.guided }));
 app.get('/api/sounds', (req, res) => res.json({ sounds: db.nature }));
@@ -208,7 +207,7 @@ app.delete('/api/admin/sounds/:id', (req, res) => {
 });
 
 // ============================================================
-// 3D PREMIUM ADMIN UI
+// LEVEL 5 ADMIN UI — THREE.JS + GSAP + LOTTIE
 // ============================================================
 app.get('/admin', (req, res) => {
   res.send(`<!DOCTYPE html>
@@ -217,7 +216,7 @@ app.get('/admin', (req, res) => {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#05070A">
-<title>Medito Studio — 3D Admin</title>
+<title>Medito Studio — Level 5</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html {
@@ -243,24 +242,40 @@ app.get('/admin', (req, res) => {
     transform-style:preserve-3d;
   }
 
-  /* ===== 3D AURORA BLOBS with rotation ===== */
+  /* Three.js canvas behind everything */
+  #three-bg {
+    position:fixed; inset:0; z-index:0;
+    pointer-events:none;
+    opacity:.55;
+  }
+
+  /* Custom cursor orb */
+  .cursor-orb {
+    position:fixed; width:22px; height:22px; border-radius:50%;
+    pointer-events:none; z-index:9999;
+    background:radial-gradient(circle,rgba(59,184,176,.9) 0%,rgba(59,184,176,0) 70%);
+    box-shadow:0 0 20px rgba(59,184,176,.6);
+    transition:transform .15s cubic-bezier(.22,.9,.28,1), opacity .3s;
+    display:none;
+  }
+  @media (pointer:fine) { .cursor-orb { display:block; } }
+
+  /* Aurora orbs (on top of three.js) */
   .blob {
-    position:fixed; border-radius:50%; filter:blur(80px);
-    pointer-events:none; z-index:0; opacity:.55;
+    position:fixed; border-radius:50%; filter:blur(90px);
+    pointer-events:none; z-index:1; opacity:.45;
     animation:orbit 30s linear infinite;
     will-change:transform;
-    transform-style:preserve-3d;
   }
-  .blob.b1 { width:560px; height:560px; top:-200px; right:-180px;
+  .blob.b1 { width:500px; height:500px; top:-180px; right:-160px;
     background:radial-gradient(circle,#3B82C4 0%,rgba(59,130,196,0) 70%);
     animation-duration:34s; }
-  .blob.b2 { width:520px; height:520px; bottom:-180px; left:-160px;
+  .blob.b2 { width:480px; height:480px; bottom:-160px; left:-140px;
     background:radial-gradient(circle,#3BB8B0 0%,rgba(59,184,176,0) 70%);
     animation-duration:40s; animation-delay:-8s; }
-  .blob.b3 { width:440px; height:440px; top:42%; left:38%;
+  .blob.b3 { width:420px; height:420px; top:42%; left:38%;
     background:radial-gradient(circle,#8A5BC4 0%,rgba(138,91,196,0) 70%);
     animation-duration:36s; animation-delay:-15s; }
-
   @keyframes orbit {
     0%   { transform:translate3d(0,0,0) scale(1) rotateZ(0deg); }
     25%  { transform:translate3d(80px,-60px,-100px) scale(1.2) rotateZ(90deg); }
@@ -269,48 +284,31 @@ app.get('/admin', (req, res) => {
     100% { transform:translate3d(0,0,0) scale(1) rotateZ(360deg); }
   }
 
-  /* ===== 3D FLOATING PARTICLES ===== */
-  .particles { position:fixed; inset:0; pointer-events:none; z-index:0; overflow:hidden;
-    perspective:900px; }
-  .particle {
-    position:absolute; width:4px; height:4px; border-radius:50%;
-    background:radial-gradient(circle,#A6C8E4 0%,rgba(166,200,228,0) 70%);
-    animation:flyUp linear infinite; opacity:.5;
-    box-shadow:0 0 8px rgba(166,200,228,.6);
-  }
-  @keyframes flyUp {
-    0%   { transform:translate3d(0,100vh,0) scale(.5); opacity:0; }
-    10%  { opacity:.8; }
-    90%  { opacity:.8; }
-    100% { transform:translate3d(60px,-100px,200px) scale(1.2); opacity:0; }
-  }
-
-  .wrap { position:relative; z-index:1; max-width:1080px; margin:0 auto;
+  .wrap { position:relative; z-index:2; max-width:1080px; margin:0 auto;
     transform-style:preserve-3d; }
 
-  /* ===== 3D GLASS HEADER ===== */
+  /* Header */
   .header {
     position:sticky; top:0; z-index:20;
     display:flex; align-items:center; justify-content:space-between;
     padding:16px 20px; margin:-20px -20px 20px -20px;
-    background:linear-gradient(135deg,rgba(10,20,35,0.7),rgba(5,7,10,0.55));
+    background:linear-gradient(135deg,rgba(10,20,35,0.7),rgba(5,7,10,0.5));
     border-bottom:1px solid rgba(255,255,255,0.1);
     backdrop-filter:blur(30px) saturate(180%);
     -webkit-backdrop-filter:blur(30px) saturate(180%);
     box-shadow:0 8px 32px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.1);
     padding-top:calc(16px + env(safe-area-inset-top));
-    animation:headerDrop .8s cubic-bezier(.22,.9,.28,1);
     transform-style:preserve-3d;
-  }
-  @keyframes headerDrop {
-    from { opacity:0; transform:translateY(-40px) rotateX(-15deg); }
-    to   { opacity:1; transform:translateY(0) rotateX(0); }
   }
   .header h1 {
     font-size:19px; font-weight:800; letter-spacing:.2px;
     background:linear-gradient(135deg,#FFFFFF 0%,#A6C8E4 100%);
     -webkit-background-clip:text; background-clip:text;
     -webkit-text-fill-color:transparent;
+    display:flex; align-items:center; gap:10px;
+  }
+  .header h1 .logo-lottie {
+    width:26px; height:26px; display:inline-block;
   }
   .badge {
     font-size:10px; padding:5px 12px; border-radius:100px;
@@ -318,23 +316,22 @@ app.get('/admin', (req, res) => {
     border:1px solid rgba(59,130,196,.45);
     color:#B8D4EA; letter-spacing:.8px; text-transform:uppercase; font-weight:700;
     box-shadow:0 0 20px rgba(59,130,196,.3), inset 0 1px 0 rgba(255,255,255,.2);
-    animation:pulseBadge 3s ease-in-out infinite;
-    transform:translateZ(10px);
+    display:flex; align-items:center; gap:6px;
   }
-  @keyframes pulseBadge {
-    0%,100% { box-shadow:0 0 20px rgba(59,130,196,.3), inset 0 1px 0 rgba(255,255,255,.2); }
-    50%     { box-shadow:0 0 30px rgba(59,184,176,.5), inset 0 1px 0 rgba(255,255,255,.3); }
+  .badge .dot-live {
+    width:6px; height:6px; border-radius:50%;
+    background:#3BB8B0; box-shadow:0 0 10px #3BB8B0;
+    animation:pulseDot 1.5s ease-in-out infinite;
+  }
+  @keyframes pulseDot {
+    0%,100% { transform:scale(1); opacity:1; }
+    50%     { transform:scale(1.4); opacity:.6; }
   }
 
-  /* ===== 3D STATS ===== */
+  /* Stats */
   .stats-bar {
     display:flex; gap:12px; margin-bottom:18px;
-    animation:statIn .8s .15s backwards cubic-bezier(.22,.9,.28,1);
     transform-style:preserve-3d;
-  }
-  @keyframes statIn {
-    from { opacity:0; transform:translateY(40px) rotateX(-25deg) scale(.9); }
-    to   { opacity:1; transform:translateY(0) rotateX(0) scale(1); }
   }
   .stat {
     flex:1; padding:16px; border-radius:20px;
@@ -343,13 +340,12 @@ app.get('/admin', (req, res) => {
     backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
     box-shadow:
       0 15px 35px rgba(0,0,0,.35),
-      0 5px 15px rgba(0,0,0,.25),
-      inset 0 1px 0 rgba(255,255,255,.2),
-      inset 0 -1px 0 rgba(0,0,0,.2);
+      inset 0 1px 0 rgba(255,255,255,.2);
     text-align:center;
     transition:transform .4s cubic-bezier(.22,.9,.28,1), box-shadow .4s;
     transform-style:preserve-3d;
     position:relative;
+    overflow:hidden;
   }
   .stat::after {
     content:''; position:absolute; inset:0; border-radius:20px;
@@ -364,7 +360,7 @@ app.get('/admin', (req, res) => {
       inset 0 1px 0 rgba(255,255,255,.3);
   }
   .stat .num {
-    font-size:24px; font-weight:800; letter-spacing:-.5px;
+    font-size:24px; font-weight:800;
     background:linear-gradient(135deg,#FFFFFF,#A6C8E4);
     -webkit-background-clip:text; background-clip:text;
     -webkit-text-fill-color:transparent;
@@ -376,12 +372,9 @@ app.get('/admin', (req, res) => {
     transform:translateZ(10px);
   }
 
-  /* ===== 3D SEARCH ===== */
-  .search-wrap {
-    margin-bottom:18px; position:relative;
-    animation:statIn .8s .25s backwards cubic-bezier(.22,.9,.28,1);
-    transform-style:preserve-3d;
-  }
+  /* Search */
+  .search-wrap { margin-bottom:18px; position:relative;
+    transform-style:preserve-3d; }
   .search-wrap input {
     width:100%; padding:16px 50px 16px 22px; font-size:14px; color:#E6EDF3;
     background:linear-gradient(160deg,rgba(255,255,255,.08),rgba(255,255,255,.02));
@@ -390,10 +383,8 @@ app.get('/admin', (req, res) => {
     backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
     box-shadow:
       0 12px 30px rgba(0,0,0,.35),
-      inset 0 1px 0 rgba(255,255,255,.15),
-      inset 0 -1px 0 rgba(0,0,0,.15);
+      inset 0 1px 0 rgba(255,255,255,.15);
     transition:all .35s cubic-bezier(.22,.9,.28,1);
-    transform-style:preserve-3d;
   }
   .search-wrap input:focus {
     border-color:rgba(59,130,196,.6);
@@ -401,28 +392,25 @@ app.get('/admin', (req, res) => {
     box-shadow:
       0 20px 45px rgba(0,0,0,.45),
       0 0 0 3px rgba(59,130,196,.15),
+      0 0 40px rgba(59,184,176,.2),
       inset 0 1px 0 rgba(255,255,255,.25);
     transform:translateY(-2px) translateZ(20px);
   }
   .search-wrap .icon {
-    position:absolute; right:20px; top:50%; transform:translateY(-50%) translateZ(15px);
+    position:absolute; right:20px; top:50%; transform:translateY(-50%);
     font-size:16px; opacity:.5; pointer-events:none;
-    transition:opacity .3s;
   }
-  .search-wrap input:focus + .icon { opacity:.9; }
 
-  /* ===== 3D TABS ===== */
+  /* Tabs */
   .tabs {
     display:flex; gap:6px; padding:7px; margin-bottom:20px;
     background:linear-gradient(160deg,rgba(255,255,255,.07),rgba(255,255,255,.02));
     border:1px solid rgba(255,255,255,.13);
     border-radius:100px;
-    backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+    backdrop-filter:blur(24px);
     box-shadow:
       0 15px 35px rgba(0,0,0,.3),
-      inset 0 1px 0 rgba(255,255,255,.2),
-      inset 0 -1px 0 rgba(0,0,0,.15);
-    animation:statIn .8s .35s backwards cubic-bezier(.22,.9,.28,1);
+      inset 0 1px 0 rgba(255,255,255,.2);
     overflow-x:auto; scrollbar-width:none;
     transform-style:preserve-3d;
   }
@@ -433,7 +421,6 @@ app.get('/admin', (req, res) => {
     transition:all .4s cubic-bezier(.22,.9,.28,1);
     border:none; background:transparent; letter-spacing:.3px; white-space:nowrap;
     position:relative; overflow:hidden;
-    transform-style:preserve-3d;
   }
   .tab::before {
     content:''; position:absolute; inset:0; border-radius:100px;
@@ -441,19 +428,18 @@ app.get('/admin', (req, res) => {
     opacity:0; transition:opacity .4s;
     box-shadow:inset 0 1px 0 rgba(255,255,255,.4);
   }
-  .tab:hover { color:#E6EDF3; transform:translateY(-1px); }
+  .tab:hover { color:#E6EDF3; }
   .tab.active {
     color:#FFF;
     box-shadow:
       0 10px 30px rgba(59,130,196,.5),
       0 4px 12px rgba(59,184,176,.3),
       inset 0 1px 0 rgba(255,255,255,.4);
-    transform:translateY(-2px) translateZ(10px);
   }
   .tab.active::before { opacity:1; }
   .tab span { position:relative; z-index:1; }
 
-  /* ===== 3D CARDS ===== */
+  /* Grid */
   .grid {
     display:grid;
     grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
@@ -472,17 +458,11 @@ app.get('/admin', (req, res) => {
     box-shadow:
       0 25px 60px rgba(0,0,0,.45),
       0 10px 25px rgba(0,0,0,.3),
-      inset 0 1px 0 rgba(255,255,255,.22),
-      inset 0 -2px 0 rgba(0,0,0,.2);
-    transition:transform .5s cubic-bezier(.22,.9,.28,1), box-shadow .5s;
+      inset 0 1px 0 rgba(255,255,255,.22);
+    transition:box-shadow .5s;
     position:relative; overflow:hidden;
-    animation:card3DIn .8s cubic-bezier(.22,.9,.28,1) backwards;
     transform-style:preserve-3d;
     will-change:transform;
-  }
-  @keyframes card3DIn {
-    from { opacity:0; transform:translateY(50px) rotateX(-20deg) scale(.9); }
-    to   { opacity:1; transform:translateY(0) rotateX(0) scale(1); }
   }
   .card::before {
     content:''; position:absolute; top:0; left:-100%; width:100%; height:100%;
@@ -491,19 +471,11 @@ app.get('/admin', (req, res) => {
     pointer-events:none;
   }
   .card:hover::before { left:100%; }
-  .card:hover {
-    box-shadow:
-      0 40px 80px rgba(0,0,0,.55),
-      0 15px 35px rgba(59,130,196,.2),
-      inset 0 1px 0 rgba(255,255,255,.35);
-  }
 
   .card img {
     width:100%; height:170px; object-fit:cover; border-radius:20px;
     margin-bottom:14px;
-    box-shadow:
-      0 15px 35px rgba(0,0,0,.5),
-      inset 0 1px 0 rgba(255,255,255,.2);
+    box-shadow:0 15px 35px rgba(0,0,0,.5);
     background:linear-gradient(135deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
     transition:transform .6s cubic-bezier(.22,.9,.28,1);
     transform:translateZ(20px);
@@ -511,7 +483,7 @@ app.get('/admin', (req, res) => {
   .card:hover img { transform:translateZ(40px) scale(1.04); }
 
   .card h3 {
-    font-size:15px; font-weight:800; margin-bottom:5px; letter-spacing:.1px;
+    font-size:15px; font-weight:800; margin-bottom:5px;
     display:flex; align-items:center; gap:8px;
     transform:translateZ(15px);
   }
@@ -521,10 +493,6 @@ app.get('/admin', (req, res) => {
     box-shadow:0 0 12px rgba(59,184,176,.9);
     animation:pulseDot 2s ease-in-out infinite;
   }
-  @keyframes pulseDot {
-    0%,100% { transform:scale(1); opacity:1; }
-    50%     { transform:scale(1.4); opacity:.7; }
-  }
   .card p {
     font-size:12px; color:#9BA5B7; line-height:1.5; margin-bottom:10px;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
@@ -532,23 +500,20 @@ app.get('/admin', (req, res) => {
     transform:translateZ(10px);
   }
 
-  /* ===== 3D PLAYER ===== */
+  /* Player */
   .player {
     display:flex; align-items:center; gap:10px; padding:11px 13px;
     background:linear-gradient(160deg,rgba(0,0,0,.4),rgba(0,0,0,.25));
     border:1px solid rgba(255,255,255,.1);
     border-radius:18px; margin-top:10px;
-    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.1);
+    backdrop-filter:blur(12px);
     transition:all .4s cubic-bezier(.22,.9,.28,1);
     transform:translateZ(15px);
     transform-style:preserve-3d;
   }
   .player.playing {
     border-color:rgba(59,184,176,.5);
-    box-shadow:
-      0 0 30px rgba(59,184,176,.3),
-      inset 0 1px 0 rgba(255,255,255,.2);
+    box-shadow:0 0 30px rgba(59,184,176,.3);
     transform:translateZ(25px);
   }
   .player .pp {
@@ -557,18 +522,17 @@ app.get('/admin', (req, res) => {
     background:linear-gradient(135deg,#3B82C4,#3BB8B0);
     box-shadow:
       0 8px 25px rgba(59,130,196,.6),
-      0 3px 10px rgba(59,184,176,.4),
-      inset 0 2px 0 rgba(255,255,255,.4),
-      inset 0 -2px 0 rgba(0,0,0,.2);
+      inset 0 2px 0 rgba(255,255,255,.4);
     display:flex; align-items:center; justify-content:center;
-    transition:transform .25s cubic-bezier(.22,.9,.28,1), box-shadow .25s;
+    transition:transform .25s cubic-bezier(.22,.9,.28,1);
     position:relative;
     transform:translateZ(20px);
+    overflow:hidden;
   }
   .player .pp::after {
     content:''; position:absolute; inset:-6px; border-radius:50%;
     border:2px solid rgba(59,184,176,.6);
-    opacity:0; transition:opacity .3s;
+    opacity:0;
   }
   .player.playing .pp::after {
     opacity:1; animation:ripple 2s ease-out infinite;
@@ -577,24 +541,15 @@ app.get('/admin', (req, res) => {
     0%   { transform:scale(1); opacity:.8; }
     100% { transform:scale(1.7); opacity:0; }
   }
-  .player .pp:hover {
-    transform:translateZ(30px) scale(1.05);
-    box-shadow:
-      0 12px 30px rgba(59,130,196,.7),
-      0 0 20px rgba(59,184,176,.5),
-      inset 0 2px 0 rgba(255,255,255,.5);
-  }
   .player .pp:active { transform:translateZ(10px) scale(.94); }
 
   .player .bar {
     flex:1; height:6px; border-radius:3px; background:rgba(255,255,255,.1);
     position:relative; cursor:pointer; overflow:hidden;
-    box-shadow:inset 0 1px 2px rgba(0,0,0,.4);
   }
   .player .bar .fill {
     height:100%; width:0%; border-radius:3px;
     background:linear-gradient(90deg,#3B82C4,#3BB8B0);
-    transition:width .1s linear;
     box-shadow:0 0 12px rgba(59,184,176,.8);
   }
   .player .time {
@@ -606,14 +561,12 @@ app.get('/admin', (req, res) => {
     background:linear-gradient(135deg,rgba(59,130,196,.35),rgba(59,130,196,.15));
     color:#B8D4EA; letter-spacing:.6px; text-transform:uppercase; font-weight:700;
     border:1px solid rgba(59,130,196,.35);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.15);
   }
   .player .src.online {
     background:linear-gradient(135deg,rgba(139,91,196,.35),rgba(139,91,196,.15));
     border-color:rgba(139,91,196,.45); color:#D4BEE8;
   }
 
-  /* ===== 3D BUTTONS ===== */
   .row { display:flex; gap:8px; align-items:center; margin-top:12px;
     transform:translateZ(10px); }
 
@@ -622,61 +575,36 @@ app.get('/admin', (req, res) => {
     background:linear-gradient(135deg,rgba(59,130,196,.3),rgba(59,130,196,.12));
     border:1px solid rgba(59,130,196,.4);
     color:#B8D4EA; letter-spacing:.6px; text-transform:uppercase; font-weight:700;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.15);
   }
-
   .like {
     padding:9px 15px; font-size:11px; border-radius:100px;
     background:linear-gradient(160deg,rgba(59,184,176,.25),rgba(59,184,176,.08));
     border:1px solid rgba(59,184,176,.45);
     color:#8FDBC8; cursor:pointer; font-weight:700;
     transition:all .3s cubic-bezier(.22,.9,.28,1);
-    position:relative; overflow:hidden;
-    box-shadow:
-      0 6px 18px rgba(0,0,0,.25),
-      inset 0 1px 0 rgba(255,255,255,.2);
+    box-shadow:0 6px 18px rgba(0,0,0,.25);
     transform:translateZ(15px);
   }
-  .like:hover {
-    transform:translateY(-3px) translateZ(25px);
-    box-shadow:
-      0 12px 25px rgba(59,184,176,.4),
-      inset 0 1px 0 rgba(255,255,255,.3);
-  }
-  .like:active { transform:translateY(-1px) translateZ(5px) scale(.94); }
-
+  .like:active { transform:scale(.94); }
   .del {
     margin-left:auto; padding:9px 15px; font-size:11px; border-radius:100px;
     border:1px solid rgba(239,68,68,.45);
     background:linear-gradient(160deg,rgba(239,68,68,.25),rgba(239,68,68,.08));
     color:#FF8A8A; cursor:pointer; font-weight:700;
     transition:all .3s cubic-bezier(.22,.9,.28,1);
-    box-shadow:
-      0 6px 18px rgba(0,0,0,.25),
-      inset 0 1px 0 rgba(255,255,255,.15);
     transform:translateZ(15px);
   }
-  .del:hover {
-    transform:translateY(-3px) translateZ(25px);
-    box-shadow:
-      0 12px 25px rgba(239,68,68,.4),
-      inset 0 1px 0 rgba(255,255,255,.25);
-  }
-  .del:active { transform:translateY(-1px) translateZ(5px) scale(.94); }
+  .del:active { transform:scale(.94); }
 
-  /* ===== 3D ADD PANEL ===== */
+  /* Add panel */
   .add-panel {
     margin-top:32px; padding:24px; border-radius:28px;
     background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.03));
     border:1px solid rgba(255,255,255,.14);
     backdrop-filter:blur(26px) saturate(180%);
-    -webkit-backdrop-filter:blur(26px) saturate(180%);
     box-shadow:
       0 30px 70px rgba(0,0,0,.5),
-      0 12px 30px rgba(0,0,0,.3),
-      inset 0 1px 0 rgba(255,255,255,.25),
-      inset 0 -2px 0 rgba(0,0,0,.2);
-    animation:statIn .9s .55s backwards cubic-bezier(.22,.9,.28,1);
+      inset 0 1px 0 rgba(255,255,255,.25);
     transform-style:preserve-3d;
   }
   .add-panel h2 {
@@ -688,17 +616,13 @@ app.get('/admin', (req, res) => {
     width:28px; height:28px; border-radius:50%; font-size:13px;
     background:linear-gradient(135deg,#3B82C4,#3BB8B0); color:#FFF;
     display:flex; align-items:center; justify-content:center; font-weight:800;
-    box-shadow:
-      0 8px 20px rgba(59,130,196,.5),
-      inset 0 2px 0 rgba(255,255,255,.4),
-      inset 0 -2px 0 rgba(0,0,0,.2);
+    box-shadow:0 8px 20px rgba(59,130,196,.5), inset 0 2px 0 rgba(255,255,255,.4);
   }
 
   .mode-switch {
     display:flex; gap:6px; padding:6px; margin-bottom:18px;
     background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.08);
     border-radius:18px;
-    box-shadow:inset 0 2px 6px rgba(0,0,0,.4);
   }
   .mode-switch button {
     flex:1; padding:12px; font-size:12px; font-weight:700;
@@ -708,13 +632,10 @@ app.get('/admin', (req, res) => {
   .mode-switch button.active {
     color:#FFF;
     background:linear-gradient(135deg,rgba(59,130,196,.6),rgba(59,184,176,.4));
-    box-shadow:
-      0 8px 20px rgba(59,130,196,.45),
-      inset 0 1px 0 rgba(255,255,255,.35);
-    transform:translateY(-2px);
+    box-shadow:0 8px 20px rgba(59,130,196,.45), inset 0 1px 0 rgba(255,255,255,.35);
   }
 
-  .field { margin-bottom:14px; transform:translateZ(10px); }
+  .field { margin-bottom:14px; }
   .field label {
     display:block; font-size:10px; color:#8A94A6; margin-bottom:7px;
     letter-spacing:1px; text-transform:uppercase; font-weight:700;
@@ -725,18 +646,11 @@ app.get('/admin', (req, res) => {
     border:1px solid rgba(255,255,255,.14);
     border-radius:16px; outline:none; font-family:inherit; resize:vertical;
     transition:all .3s cubic-bezier(.22,.9,.28,1);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.1),
-      inset 0 -1px 3px rgba(0,0,0,.2);
   }
   .add-panel input:focus, .add-panel textarea:focus, .add-panel select:focus {
     border-color:rgba(59,130,196,.65);
     background:linear-gradient(160deg,rgba(59,130,196,.1),rgba(59,184,176,.04));
-    box-shadow:
-      0 0 0 3px rgba(59,130,196,.15),
-      0 8px 20px rgba(59,130,196,.2),
-      inset 0 1px 0 rgba(255,255,255,.15);
-    transform:translateY(-1px);
+    box-shadow:0 0 0 3px rgba(59,130,196,.15), 0 8px 20px rgba(59,130,196,.2);
   }
 
   .add-panel button.primary {
@@ -746,52 +660,36 @@ app.get('/admin', (req, res) => {
     background:linear-gradient(135deg,#3B82C4,#3BB8B0);
     box-shadow:
       0 16px 40px rgba(59,130,196,.5),
-      0 6px 15px rgba(59,184,176,.3),
-      inset 0 2px 0 rgba(255,255,255,.4),
-      inset 0 -3px 0 rgba(0,0,0,.25);
+      inset 0 2px 0 rgba(255,255,255,.4);
     transition:all .3s cubic-bezier(.22,.9,.28,1);
     margin-top:10px;
     transform:translateZ(20px);
-    transform-style:preserve-3d;
-  }
-  .add-panel button.primary::before {
-    content:''; position:absolute; top:0; left:-100%; width:100%; height:100%;
-    background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);
-    transition:left .7s ease;
   }
   .add-panel button.primary:hover {
     transform:translateY(-3px) translateZ(30px);
     box-shadow:
       0 22px 55px rgba(59,130,196,.6),
-      0 10px 25px rgba(59,184,176,.4),
+      0 0 40px rgba(59,184,176,.4),
       inset 0 2px 0 rgba(255,255,255,.5);
   }
-  .add-panel button.primary:hover::before { left:100%; }
   .add-panel button.primary:active {
     transform:translateY(-1px) translateZ(10px);
-    box-shadow:
-      0 8px 20px rgba(59,130,196,.5),
-      inset 0 3px 8px rgba(0,0,0,.3);
+    box-shadow:0 8px 20px rgba(59,130,196,.5), inset 0 3px 8px rgba(0,0,0,.3);
   }
-  .add-panel button.primary:disabled {
-    opacity:.55; cursor:not-allowed; transform:none;
-  }
+  .add-panel button.primary:disabled { opacity:.55; cursor:not-allowed; }
 
   .drop-zone {
     padding:26px; border-radius:20px; text-align:center; cursor:pointer;
     border:2px dashed rgba(255,255,255,.2);
     background:linear-gradient(160deg,rgba(255,255,255,.04),rgba(255,255,255,.01));
     transition:all .35s cubic-bezier(.22,.9,.28,1); margin-bottom:14px;
-    box-shadow:inset 0 2px 8px rgba(0,0,0,.2);
     transform-style:preserve-3d;
   }
   .drop-zone:hover, .drop-zone.drag {
     border-color:rgba(59,130,196,.75);
     background:linear-gradient(160deg,rgba(59,130,196,.12),rgba(59,184,176,.06));
     transform:translateY(-4px) translateZ(25px) rotateX(3deg);
-    box-shadow:
-      0 20px 45px rgba(59,130,196,.3),
-      inset 0 2px 8px rgba(0,0,0,.15);
+    box-shadow:0 20px 45px rgba(59,130,196,.3);
   }
   .drop-zone .icon {
     font-size:30px; margin-bottom:8px; opacity:.75;
@@ -808,7 +706,6 @@ app.get('/admin', (req, res) => {
   .progress {
     height:9px; border-radius:5px; background:rgba(255,255,255,.08);
     margin-top:14px; overflow:hidden; display:none;
-    box-shadow:inset 0 2px 5px rgba(0,0,0,.4);
   }
   .progress.show { display:block; }
   .progress-bar {
@@ -830,7 +727,6 @@ app.get('/admin', (req, res) => {
 
   .empty {
     text-align:center; color:#8A94A6; padding:70px 20px; font-size:13px;
-    animation:statIn .7s cubic-bezier(.22,.9,.28,1);
   }
   .empty .icon {
     font-size:56px; opacity:.35; margin-bottom:16px;
@@ -848,29 +744,62 @@ app.get('/admin', (req, res) => {
     padding:15px 28px; border-radius:100px; font-size:13px; font-weight:700;
     background:linear-gradient(160deg,rgba(20,25,35,.97),rgba(10,15,25,.95));
     color:#fff; border:1px solid rgba(255,255,255,.15);
-    backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
-    box-shadow:
-      0 25px 60px rgba(0,0,0,.6),
-      inset 0 1px 0 rgba(255,255,255,.2);
+    backdrop-filter:blur(24px);
+    box-shadow:0 25px 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.2);
     transition:all .55s cubic-bezier(.22,.9,.28,1); z-index:100;
     max-width:calc(100vw - 40px); text-align:center;
-    transform-style:preserve-3d;
   }
-  .toast.show {
-    transform:translateX(-50%) translateY(0) rotateX(0); opacity:1;
+  .toast.show { transform:translateX(-50%) translateY(0) rotateX(0); opacity:1; }
+
+  /* Loading overlay */
+  #loading {
+    position:fixed; inset:0; z-index:9998;
+    background:radial-gradient(circle at 50% 50%, #0B1420 0%, #05070A 100%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    transition:opacity .6s ease, visibility .6s;
   }
+  #loading.hide { opacity:0; visibility:hidden; }
+  #loading .lottie-box { width:120px; height:120px; }
+  #loading .lbl {
+    margin-top:20px; font-size:12px;
+    letter-spacing:2px; text-transform:uppercase;
+    color:#3BB8B0; font-weight:700;
+    animation:pulseDot 1.5s ease-in-out infinite;
+  }
+
+  /* Lottie icon in buttons */
+  .lottie-inline { width:20px; height:20px; display:inline-block; vertical-align:middle; margin-right:8px; }
 </style>
 </head>
 <body>
+
+  <!-- Loading overlay with Lottie -->
+  <div id="loading">
+    <div class="lottie-box" id="lottie-loader"></div>
+    <div class="lbl">Loading Studio</div>
+  </div>
+
+  <!-- Three.js background canvas -->
+  <canvas id="three-bg"></canvas>
+
+  <!-- Aurora orbs -->
   <div class="blob b1"></div>
   <div class="blob b2"></div>
   <div class="blob b3"></div>
-  <div class="particles" id="particles"></div>
+
+  <!-- Cursor orb -->
+  <div class="cursor-orb" id="cursorOrb"></div>
 
   <div class="wrap">
     <div class="header">
-      <h1>Medito Studio</h1>
-      <div class="badge">3D Premium ✦</div>
+      <h1>
+        <span class="logo-lottie" id="lottie-logo"></span>
+        Medito Studio
+      </h1>
+      <div class="badge">
+        <span class="dot-live"></span>
+        L5 · MAX
+      </div>
     </div>
 
     <div class="stats-bar">
@@ -944,66 +873,172 @@ app.get('/admin', (req, res) => {
 
   <div class="toast" id="toast"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
 <script>
+  // ============================================================
+  // LOTTIE LOADER + LOGO
+  // ============================================================
+  const lottieLoaderData = {
+    v:"5.7.4", fr:30, ip:0, op:60, w:120, h:120, nm:"loader", ddd:0, assets:[],
+    layers:[
+      { ddd:0, ind:1, ty:4, nm:"circle1", sr:1,
+        ks:{ o:{a:1,k:[{t:0,s:[100]},{t:30,s:[20]},{t:60,s:[100]}]},
+             r:{a:0,k:0},
+             p:{a:0,k:[60,60,0]},
+             a:{a:0,k:[0,0,0]},
+             s:{a:1,k:[{t:0,s:[30,30,100]},{t:30,s:[100,100,100]},{t:60,s:[30,30,100]}]}},
+        ao:0, shapes:[{ ty:"el", p:{a:0,k:[0,0]}, s:{a:0,k:[60,60]}, nm:"e" }],
+        ip:0, op:60, st:0, bm:0 },
+      { ddd:0, ind:2, ty:4, nm:"circle2", sr:1,
+        ks:{ o:{a:1,k:[{t:0,s:[100]},{t:30,s:[100]},{t:60,s:[100]}]},
+             r:{a:0,k:0},
+             p:{a:0,k:[60,60,0]},
+             a:{a:0,k:[0,0,0]},
+             s:{a:0,k:[100,100,100]}},
+        ao:0, shapes:[{ ty:"el", p:{a:0,k:[0,0]}, s:{a:0,k:[60,60]}, nm:"e" }],
+        ip:0, op:60, st:0, bm:0 }
+    ]
+  };
+
+  lottie.loadAnimation({
+    container: document.getElementById('lottie-loader'),
+    renderer: 'svg', loop: true, autoplay: true,
+    animationData: lottieLoaderData
+  });
+
+  // Simple logo animation
+  lottie.loadAnimation({
+    container: document.getElementById('lottie-logo'),
+    renderer: 'svg', loop: true, autoplay: true,
+    animationData: lottieLoaderData
+  });
+
+  // ============================================================
+  // THREE.JS — 3D Starfield + Rotating Torus Knot
+  // ============================================================
+  (function initThree() {
+    const canvas = document.getElementById('three-bg');
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 30;
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    // Particle starfield
+    const starsGeo = new THREE.BufferGeometry();
+    const starsCount = 2000;
+    const positions = new Float32Array(starsCount * 3);
+    const colors = new Float32Array(starsCount * 3);
+    for (let i = 0; i < starsCount; i++) {
+      positions[i*3]   = (Math.random() - 0.5) * 200;
+      positions[i*3+1] = (Math.random() - 0.5) * 200;
+      positions[i*3+2] = (Math.random() - 0.5) * 200;
+      const t = Math.random();
+      colors[i*3]   = 0.23 + t * 0.2;
+      colors[i*3+1] = 0.51 + t * 0.2;
+      colors[i*3+2] = 0.69 + t * 0.2;
+    }
+    starsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    starsGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const starsMat = new THREE.PointsMaterial({
+      size: 0.4, vertexColors: true, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const stars = new THREE.Points(starsGeo, starsMat);
+    scene.add(stars);
+
+    // Rotating torus knot
+    const torusGeo = new THREE.TorusKnotGeometry(8, 0.4, 200, 20);
+    const torusMat = new THREE.MeshBasicMaterial({
+      color: 0x3BB8B0, transparent: true, opacity: 0.15, wireframe: true
+    });
+    const torus = new THREE.Mesh(torusGeo, torusMat);
+    torus.position.set(20, -10, -30);
+    scene.add(torus);
+
+    const torus2Geo = new THREE.TorusKnotGeometry(6, 0.3, 150, 16);
+    const torus2Mat = new THREE.MeshBasicMaterial({
+      color: 0x8A5BC4, transparent: true, opacity: 0.12, wireframe: true
+    });
+    const torus2 = new THREE.Mesh(torus2Geo, torus2Mat);
+    torus2.position.set(-25, 15, -40);
+    scene.add(torus2);
+
+    // Animate
+    let mx = 0, my = 0;
+    document.addEventListener('mousemove', (e) => {
+      mx = (e.clientX / window.innerWidth - 0.5) * 2;
+      my = (e.clientY / window.innerHeight - 0.5) * 2;
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      stars.rotation.y += 0.0003;
+      stars.rotation.x += 0.0001;
+      torus.rotation.x += 0.004;
+      torus.rotation.y += 0.006;
+      torus2.rotation.x -= 0.003;
+      torus2.rotation.y -= 0.005;
+      camera.position.x += (mx * 3 - camera.position.x) * 0.02;
+      camera.position.y += (-my * 3 - camera.position.y) * 0.02;
+      camera.lookAt(0, 0, 0);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  })();
+
+  // ============================================================
+  // GSAP — entrance animations
+  // ============================================================
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      document.getElementById('loading').classList.add('hide');
+    }, 900);
+
+    const tl = gsap.timeline({ delay: 1.0 });
+    tl.from('.header', { y: -60, opacity: 0, rotateX: -30, duration: 0.9, ease: 'power3.out' })
+      .from('.stat', { y: 40, opacity: 0, rotateX: -25, stagger: 0.1, duration: 0.7, ease: 'back.out(1.4)' }, '-=0.5')
+      .from('.search-wrap', { y: 30, opacity: 0, duration: 0.6, ease: 'power2.out' }, '-=0.4')
+      .from('.tabs', { y: 30, opacity: 0, duration: 0.6, ease: 'power2.out' }, '-=0.4');
+  });
+
+  // ============================================================
+  // CURSOR ORB (desktop only)
+  // ============================================================
+  (function initCursor() {
+    if (!window.matchMedia('(pointer:fine)').matches) return;
+    const orb = document.getElementById('cursorOrb');
+    let ox = 0, oy = 0, tx = 0, ty = 0;
+    document.addEventListener('mousemove', (e) => {
+      tx = e.clientX; ty = e.clientY;
+      orb.style.left = (e.clientX - 11) + 'px';
+      orb.style.top  = (e.clientY - 11) + 'px';
+    });
+    function loop() {
+      requestAnimationFrame(loop);
+    }
+    loop();
+  })();
+
+  // ============================================================
+  // MAIN APP LOGIC
+  // ============================================================
   let currentTab = 'nature';
   let currentMode = 'upload';
   const grid = document.getElementById('grid');
   const toast = document.getElementById('toast');
   let activeAudio = null;
-
-  // ===== 3D particles =====
-  (function makeParticles() {
-    const box = document.getElementById('particles');
-    const n = 22;
-    for (let i = 0; i < n; i++) {
-      const p = document.createElement('div');
-      p.className = 'particle';
-      p.style.left = Math.random() * 100 + '%';
-      p.style.animationDuration = (14 + Math.random() * 16) + 's';
-      p.style.animationDelay = (-Math.random() * 25) + 's';
-      p.style.opacity = 0.25 + Math.random() * 0.5;
-      p.style.width = p.style.height = (2 + Math.random() * 4) + 'px';
-      box.appendChild(p);
-    }
-  })();
-
-  // ===== 3D tilt on cards =====
-  function attachTilt(card) {
-    let rafId = null;
-    let lastEvent = null;
-
-    function handleMove(e) {
-      lastEvent = e;
-      if (rafId) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        const ev = lastEvent;
-        if (!ev) return;
-        const rect = card.getBoundingClientRect();
-        const x = ev.clientX - rect.left;
-        const y = ev.clientY - rect.top;
-        const cx = rect.width / 2;
-        const cy = rect.height / 2;
-        const rotateY = ((x - cx) / cx) * 8;
-        const rotateX = -((y - cy) / cy) * 8;
-        card.style.transform =
-          'perspective(1200px) rotateX(' + rotateX + 'deg) rotateY(' + rotateY + 'deg) translateY(-8px) translateZ(20px) scale(1.02)';
-      });
-    }
-
-    function handleLeave() {
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-      card.style.transform = '';
-    }
-
-    card.addEventListener('mousemove', handleMove);
-    card.addEventListener('mouseleave', handleLeave);
-    card.addEventListener('touchmove', (e) => {
-      const t = e.touches[0];
-      if (t) handleMove({ clientX: t.clientX, clientY: t.clientY });
-    }, { passive: true });
-    card.addEventListener('touchend', handleLeave);
-  }
 
   function showToast(msg) {
     toast.textContent = msg;
@@ -1044,6 +1079,7 @@ app.get('/admin', (req, res) => {
 
   document.querySelectorAll('.tab').forEach(t => {
     t.addEventListener('click', () => {
+      gsap.to(t, { scale: 0.92, duration: 0.1, yoyo: true, repeat: 1 });
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       t.classList.add('active');
       currentTab = t.dataset.tab;
@@ -1091,7 +1127,7 @@ app.get('/admin', (req, res) => {
       return;
     }
     grid.innerHTML = list.map((s, i) => \`
-      <div class="card" data-idx="\${i}" style="animation-delay:\${(i * 70)}ms">
+      <div class="card" data-idx="\${i}">
         \${s.thumbnail ? \`<img src="\${s.thumbnail}" loading="lazy" onerror="this.style.display='none'">\` : ''}
         <h3><span class="dot"></span>\${escapeHtml(s.title)}</h3>
         <p>\${escapeHtml(s.description || '')}\${s.duration ? ' · ' + s.duration : ''}\${s.instructor ? ' · with ' + escapeHtml(s.instructor) : ''}</p>
@@ -1109,7 +1145,15 @@ app.get('/admin', (req, res) => {
       </div>
     \`).join('');
 
-    // Attach 3D tilt to each card
+    // GSAP stagger entry
+    gsap.from('.card', {
+      y: 60, opacity: 0, rotateX: -25, scale: 0.92,
+      duration: 0.7, stagger: 0.07, ease: 'back.out(1.4)',
+      onComplete: () => {
+        document.querySelectorAll('.card').forEach(c => c.style.transform = '');
+      }
+    });
+
     grid.querySelectorAll('.card').forEach(attachTilt);
   }
 
@@ -1117,6 +1161,40 @@ app.get('/admin', (req, res) => {
     return String(str || '').replace(/[&<>"']/g, c => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[c]));
+  }
+
+  // 3D tilt (like before, with GSAP)
+  function attachTilt(card) {
+    let rafId = null, lastEvent = null;
+    function handleMove(e) {
+      lastEvent = e;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const ev = lastEvent;
+        if (!ev) return;
+        const rect = card.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        const y = ev.clientY - rect.top;
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const ry = ((x - cx) / cx) * 8;
+        const rx = -((y - cy) / cy) * 8;
+        card.style.transform =
+          'perspective(1200px) rotateX(' + rx + 'deg) rotateY(' + ry + 'deg) translateY(-8px) translateZ(20px) scale(1.02)';
+      });
+    }
+    function handleLeave() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      card.style.transform = '';
+    }
+    card.addEventListener('mousemove', handleMove);
+    card.addEventListener('mouseleave', handleLeave);
+    card.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (t) handleMove({ clientX: t.clientX, clientY: t.clientY });
+    }, { passive: true });
+    card.addEventListener('touchend', handleLeave);
   }
 
   function togglePlay(btn) {
@@ -1283,7 +1361,7 @@ app.get('/admin', (req, res) => {
     });
   });
 
-  // ===== Parallax on scroll =====
+  // Parallax scroll for blobs
   window.addEventListener('scroll', () => {
     const y = window.scrollY;
     document.querySelectorAll('.blob').forEach((b, i) => {
@@ -1300,6 +1378,6 @@ app.get('/admin', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✓ Medito 3D Premium on :${PORT}`);
-  console.log(`  Admin: http://localhost:${PORT}/admin`);
+  console.log('✓ Medito LEVEL 5 MAX on :' + PORT);
+  console.log('  Admin: http://localhost:' + PORT + '/admin');
 });
