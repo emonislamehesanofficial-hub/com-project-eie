@@ -79,12 +79,24 @@ const commonFields = {
 const Meditation = mongoose.model('Meditation', new mongoose.Schema(commonFields));
 const Sound = mongoose.model('Sound', new mongoose.Schema(commonFields));
 
-// Helpers
-const baseUrl = (req) => process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
+// ============================================================
+// Helpers — FORCE HTTPS URLS (Render proxies over HTTP but serves HTTPS)
+// ============================================================
+const baseUrl = (req) => {
+  const envBase = process.env.BASE_URL;
+  if (envBase && envBase.startsWith('http')) {
+    return envBase.replace(/^http:\/\//, 'https://');
+  }
+  const host = req.get('host');
+  return `https://${host}`;
+};
+
 const buildFileUrl = (req, filePath) => {
   if (!filePath) return '';
-  return `${baseUrl(req)}/${filePath.replace(/\\/g, '/')}`;
+  const clean = filePath.replace(/\\/g, '/');
+  return `${baseUrl(req)}/${clean}`;
 };
+
 const extractRelative = (url, category, kind) => {
   const m = url && url.match(new RegExp(`uploads/${category}/${kind}/[^/]+$`));
   return m ? m[0] : null;
@@ -268,7 +280,7 @@ app.delete('/api/sounds/:id', async (req, res) => {
 
 // Health
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'serene-backend', version: '2.0' });
+  res.json({ status: 'ok', service: 'serene-backend', version: '2.1' });
 });
 
 // ============================================================
