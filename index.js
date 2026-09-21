@@ -1,6 +1,7 @@
 // ============================================================
 // SERENE BACKEND — Meditation & Sound Management
 // Single file: API + Admin Panel (no separate index.html)
+// Fixed: Separate schemas, explicit collections, admin logging
 // ============================================================
 
 const express = require('express');
@@ -51,36 +52,55 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 300 * 1024 * 1024 } });
 
 const meditationUpload = (req, res, next) => { req.uploadCategory = 'meditations'; next(); };
-const soundUpload = (req, res, next) => { req.uploadCategory = 'sounds'; next(); };
+const soundUpload      = (req, res, next) => { req.uploadCategory = 'sounds';      next(); };
 
 const uploadFields = upload.fields([
   { name: 'audio', maxCount: 1 },
   { name: 'thumbnail', maxCount: 1 }
 ]);
 
-// Schemas
-const commonFields = {
-  title: { type: String, required: true },
-  description: { type: String, default: '' },
-  category: { type: String, default: 'General' },
-  tags: [{ type: String }],
-  audioUrl: { type: String, required: true },
-  thumbnailUrl: { type: String, default: '' },
+// ============================================================
+// ✅ FIX #1: FULLY SEPARATE SCHEMAS (no shared mutation)
+// ============================================================
+const meditationSchema = new mongoose.Schema({
+  title:           { type: String, required: true },
+  description:     { type: String, default: '' },
+  category:        { type: String, default: 'General' },
+  tags:            [{ type: String }],
+  audioUrl:        { type: String, required: true },
+  thumbnailUrl:    { type: String, default: '' },
   durationSeconds: { type: Number, default: 0 },
-  fileSize: { type: Number, default: 0 },
-  sortOrder: { type: Number, default: 0 },
-  isPublished: { type: Boolean, default: true },
-  isFeatured: { type: Boolean, default: false },
-  isActive: { type: Boolean, default: true },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
-};
+  fileSize:        { type: Number, default: 0 },
+  sortOrder:       { type: Number, default: 0 },
+  isPublished:     { type: Boolean, default: true },
+  isFeatured:      { type: Boolean, default: false },
+  isActive:        { type: Boolean, default: true },
+  createdAt:       { type: Date,    default: Date.now },
+  updatedAt:       { type: Date,    default: Date.now }
+}, { collection: 'meditations' });  // ⭐ explicit collection
 
-const Meditation = mongoose.model('Meditation', new mongoose.Schema(commonFields));
-const Sound = mongoose.model('Sound', new mongoose.Schema(commonFields));
+const soundSchema = new mongoose.Schema({
+  title:           { type: String, required: true },
+  description:     { type: String, default: '' },
+  category:        { type: String, default: 'Ambient' },
+  tags:            [{ type: String }],
+  audioUrl:        { type: String, required: true },
+  thumbnailUrl:    { type: String, default: '' },
+  durationSeconds: { type: Number, default: 0 },
+  fileSize:        { type: Number, default: 0 },
+  sortOrder:       { type: Number, default: 0 },
+  isPublished:     { type: Boolean, default: true },
+  isFeatured:      { type: Boolean, default: false },
+  isActive:        { type: Boolean, default: true },
+  createdAt:       { type: Date,    default: Date.now },
+  updatedAt:       { type: Date,    default: Date.now }
+}, { collection: 'sounds' });       // ⭐ explicit collection
+
+const Meditation = mongoose.model('Meditation', meditationSchema);
+const Sound      = mongoose.model('Sound',      soundSchema);
 
 // ============================================================
-// Helpers — FORCE HTTPS URLS (Render proxies over HTTP but serves HTTPS)
+// Helpers — FORCE HTTPS URLS
 // ============================================================
 const baseUrl = (req) => {
   const envBase = process.env.BASE_URL;
@@ -109,9 +129,14 @@ app.get('/api/meditations', async (req, res) => {
   try {
     const q = {};
     if (req.query.published === 'true') q.isPublished = true;
-    if (req.query.active === 'true') q.isActive = true;
-    res.json({ items: await Meditation.find(q).sort({ sortOrder: 1, createdAt: -1 }) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (req.query.active === 'true')    q.isActive    = true;
+    const items = await Meditation.find(q).sort({ sortOrder: 1, createdAt: -1 });
+    console.log(`[API] /api/meditations → ${items.length} items`);
+    res.json({ items });
+  } catch (e) {
+    console.error('[API] meditations error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/meditations/:id', async (req, res) => {
@@ -129,21 +154,25 @@ app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) =>
     const thumb = req.files?.thumbnail?.[0];
     const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     const doc = await Meditation.create({
-      title: req.body.title || 'Untitled',
-      description: req.body.description || '',
-      category: req.body.category || 'General',
+      title:           req.body.title || 'Untitled',
+      description:     req.body.description || '',
+      category:        req.body.category || 'General',
       tags,
-      audioUrl: buildFileUrl(req, audio.path),
-      thumbnailUrl: thumb ? buildFileUrl(req, thumb.path) : '',
+      audioUrl:        buildFileUrl(req, audio.path),
+      thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: parseInt(req.body.durationSeconds || '0', 10),
-      fileSize: audio.size,
-      sortOrder: parseInt(req.body.sortOrder || '0', 10),
-      isPublished: req.body.isPublished !== 'false',
-      isFeatured: req.body.isFeatured === 'true',
-      isActive: req.body.isActive !== 'false'
+      fileSize:        audio.size,
+      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
+      isPublished:     req.body.isPublished !== 'false',
+      isFeatured:      req.body.isFeatured === 'true',
+      isActive:        req.body.isActive !== 'false'
     });
+    console.log(`[ADMIN] ✅ Created meditation: "${doc.title}" (${doc._id})`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation create error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res) => {
@@ -163,19 +192,23 @@ app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res)
       if (old) fs.unlink(old, () => {});
       doc.thumbnailUrl = buildFileUrl(req, thumb.path);
     }
-    if (req.body.title !== undefined) doc.title = req.body.title;
-    if (req.body.description !== undefined) doc.description = req.body.description;
-    if (req.body.category !== undefined) doc.category = req.body.category;
-    if (req.body.tags !== undefined) doc.tags = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (req.body.title           !== undefined) doc.title           = req.body.title;
+    if (req.body.description     !== undefined) doc.description     = req.body.description;
+    if (req.body.category        !== undefined) doc.category        = req.body.category;
+    if (req.body.tags            !== undefined) doc.tags            = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
     if (req.body.durationSeconds !== undefined) doc.durationSeconds = parseInt(req.body.durationSeconds, 10);
-    if (req.body.sortOrder !== undefined) doc.sortOrder = parseInt(req.body.sortOrder, 10);
-    if (req.body.isPublished !== undefined) doc.isPublished = req.body.isPublished === 'true';
-    if (req.body.isFeatured !== undefined) doc.isFeatured = req.body.isFeatured === 'true';
-    if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
+    if (req.body.sortOrder       !== undefined) doc.sortOrder       = parseInt(req.body.sortOrder, 10);
+    if (req.body.isPublished     !== undefined) doc.isPublished     = req.body.isPublished === 'true';
+    if (req.body.isFeatured      !== undefined) doc.isFeatured      = req.body.isFeatured === 'true';
+    if (req.body.isActive        !== undefined) doc.isActive        = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
+    console.log(`[ADMIN] ✏️ Updated meditation: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation update error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/meditations/:id', async (req, res) => {
@@ -186,8 +219,12 @@ app.delete('/api/meditations/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'meditations', 'thumbs');
     if (t) fs.unlink(t, () => {});
+    console.log(`[ADMIN] 🗑️ Deleted meditation: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation delete error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================
@@ -197,9 +234,14 @@ app.get('/api/sounds', async (req, res) => {
   try {
     const q = {};
     if (req.query.published === 'true') q.isPublished = true;
-    if (req.query.active === 'true') q.isActive = true;
-    res.json({ items: await Sound.find(q).sort({ sortOrder: 1, createdAt: -1 }) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (req.query.active === 'true')    q.isActive    = true;
+    const items = await Sound.find(q).sort({ sortOrder: 1, createdAt: -1 });
+    console.log(`[API] /api/sounds → ${items.length} items`);
+    res.json({ items });
+  } catch (e) {
+    console.error('[API] sounds error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/sounds/:id', async (req, res) => {
@@ -217,21 +259,25 @@ app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
     const thumb = req.files?.thumbnail?.[0];
     const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     const doc = await Sound.create({
-      title: req.body.title || 'Untitled',
-      description: req.body.description || '',
-      category: req.body.category || 'Ambient',
+      title:           req.body.title || 'Untitled',
+      description:     req.body.description || '',
+      category:        req.body.category || 'Ambient',
       tags,
-      audioUrl: buildFileUrl(req, audio.path),
-      thumbnailUrl: thumb ? buildFileUrl(req, thumb.path) : '',
+      audioUrl:        buildFileUrl(req, audio.path),
+      thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: parseInt(req.body.durationSeconds || '0', 10),
-      fileSize: audio.size,
-      sortOrder: parseInt(req.body.sortOrder || '0', 10),
-      isPublished: req.body.isPublished !== 'false',
-      isFeatured: req.body.isFeatured === 'true',
-      isActive: req.body.isActive !== 'false'
+      fileSize:        audio.size,
+      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
+      isPublished:     req.body.isPublished !== 'false',
+      isFeatured:      req.body.isFeatured === 'true',
+      isActive:        req.body.isActive !== 'false'
     });
+    console.log(`[ADMIN] ✅ Created sound: "${doc.title}" (${doc._id})`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound create error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
@@ -251,19 +297,23 @@ app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
       if (old) fs.unlink(old, () => {});
       doc.thumbnailUrl = buildFileUrl(req, thumb.path);
     }
-    if (req.body.title !== undefined) doc.title = req.body.title;
-    if (req.body.description !== undefined) doc.description = req.body.description;
-    if (req.body.category !== undefined) doc.category = req.body.category;
-    if (req.body.tags !== undefined) doc.tags = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
+    if (req.body.title           !== undefined) doc.title           = req.body.title;
+    if (req.body.description     !== undefined) doc.description     = req.body.description;
+    if (req.body.category        !== undefined) doc.category        = req.body.category;
+    if (req.body.tags            !== undefined) doc.tags            = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
     if (req.body.durationSeconds !== undefined) doc.durationSeconds = parseInt(req.body.durationSeconds, 10);
-    if (req.body.sortOrder !== undefined) doc.sortOrder = parseInt(req.body.sortOrder, 10);
-    if (req.body.isPublished !== undefined) doc.isPublished = req.body.isPublished === 'true';
-    if (req.body.isFeatured !== undefined) doc.isFeatured = req.body.isFeatured === 'true';
-    if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
+    if (req.body.sortOrder       !== undefined) doc.sortOrder       = parseInt(req.body.sortOrder, 10);
+    if (req.body.isPublished     !== undefined) doc.isPublished     = req.body.isPublished === 'true';
+    if (req.body.isFeatured      !== undefined) doc.isFeatured      = req.body.isFeatured === 'true';
+    if (req.body.isActive        !== undefined) doc.isActive        = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
+    console.log(`[ADMIN] ✏️ Updated sound: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound update error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/sounds/:id', async (req, res) => {
@@ -274,17 +324,21 @@ app.delete('/api/sounds/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'sounds', 'thumbs');
     if (t) fs.unlink(t, () => {});
+    console.log(`[ADMIN] 🗑️ Deleted sound: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound delete error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Health
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'serene-backend', version: '2.1' });
+  res.json({ status: 'ok', service: 'serene-backend', version: '2.2' });
 });
 
 // ============================================================
-// ADMIN PANEL — served directly from index.js
+// ADMIN PANEL
 // ============================================================
 const ADMIN_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -408,11 +462,54 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 <script>
 const API=window.location.origin;
 let data={meditations:[],sounds:[]};
-function switchPage(n,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));document.getElementById('page-'+n).classList.add('active');el.classList.add('active');if(n==='meditations')loadMeditations();if(n==='sounds')loadSounds();}
-async function loadMeditations(){const g=document.getElementById('grid-meditations');g.innerHTML='<div class="loading"><div class="spinner"></div></div>';try{const r=await fetch(API+'/api/meditations');const j=await r.json();data.meditations=j.items||[];renderGrid('meditation',data.meditations,g);}catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}}
-async function loadSounds(){const g=document.getElementById('grid-sounds');g.innerHTML='<div class="loading"><div class="spinner"></div></div>';try{const r=await fetch(API+'/api/sounds');const j=await r.json();data.sounds=j.items||[];renderGrid('sound',data.sounds,g);}catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}}
-function renderGrid(type,items,grid){if(!items.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;">No '+type+'s yet. Click "+ Add" to create one.</div>';return;}
-grid.innerHTML=items.map(item=>\`
+
+function switchPage(n,el){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+  document.getElementById('page-'+n).classList.add('active');
+  el.classList.add('active');
+  if(n==='meditations')loadMeditations();
+  if(n==='sounds')loadSounds();
+}
+
+async function loadMeditations(){
+  const g=document.getElementById('grid-meditations');
+  g.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  try{
+    const r=await fetch(API+'/api/meditations');
+    const j=await r.json();
+    data.meditations=j.items||[];
+    console.log('[ADMIN] Loaded', data.meditations.length, 'meditations');
+    data.meditations.forEach(m=>console.log('  🎵', m.title, '|', m.category, '|', m.audioUrl));
+    renderGrid('meditation',data.meditations,g);
+  }catch(e){
+    console.error('[ADMIN] Meditations load error:', e);
+    g.innerHTML='<div class="empty">Error: '+e.message+'</div>';
+  }
+}
+
+async function loadSounds(){
+  const g=document.getElementById('grid-sounds');
+  g.innerHTML='<div class="loading"><div class="spinner"></div></div>';
+  try{
+    const r=await fetch(API+'/api/sounds');
+    const j=await r.json();
+    data.sounds=j.items||[];
+    console.log('[ADMIN] Loaded', data.sounds.length, 'sounds');
+    data.sounds.forEach(s=>console.log('  🌧️', s.title, '|', s.category, '|', s.audioUrl));
+    renderGrid('sound',data.sounds,g);
+  }catch(e){
+    console.error('[ADMIN] Sounds load error:', e);
+    g.innerHTML='<div class="empty">Error: '+e.message+'</div>';
+  }
+}
+
+function renderGrid(type,items,grid){
+  if(!items.length){
+    grid.innerHTML='<div class="empty" style="grid-column:1/-1;">No '+type+'s yet. Click "+ Add" to create one.</div>';
+    return;
+  }
+  grid.innerHTML=items.map(item=>\`
 <div class="card">
 <img class="card-thumb" src="\${item.thumbnailUrl||''}" onerror="this.style.background='#23262d';this.src='';">
 <div class="card-body">
@@ -429,17 +526,152 @@ grid.innerHTML=items.map(item=>\`
 <button class="btn btn-danger btn-sm" onclick="deleteItem('\${type}','\${item._id}')">🗑️</button>
 </div>
 </div>
-</div>\`).join('');}
-function openForm(type,editId){document.getElementById('modal').classList.add('open');document.getElementById('item-type').value=type;document.getElementById('item-id').value=editId||'';document.getElementById('modal-title').textContent=editId?'Edit':(type==='meditation'?'Add Meditation':'Add Sound');document.getElementById('item-form').reset();document.getElementById('f-published').checked=true;document.getElementById('f-active').checked=true;document.getElementById('curr-audio').textContent='';document.getElementById('curr-thumb').textContent='';document.getElementById('prog-bar').style.display='none';document.getElementById('prog-text').style.display='none';
-if(editId){const list=type==='meditation'?data.meditations:data.sounds;const it=list.find(i=>i._id===editId);if(it){document.getElementById('f-title').value=it.title||'';document.getElementById('f-description').value=it.description||'';document.getElementById('f-category').value=it.category||'';document.getElementById('f-sort').value=it.sortOrder||0;document.getElementById('f-duration').value=it.durationSeconds||0;document.getElementById('f-published').checked=!!it.isPublished;document.getElementById('f-featured').checked=!!it.isFeatured;document.getElementById('f-active').checked=!!it.isActive;document.getElementById('curr-audio').textContent=it.audioUrl?'Current: Uploaded ✓':'';document.getElementById('curr-thumb').textContent=it.thumbnailUrl?'Current: Uploaded ✓':'';}}}
-function closeModal(){document.getElementById('modal').classList.remove('open');}
-document.getElementById('item-form').addEventListener('submit',async(e)=>{e.preventDefault();const type=document.getElementById('item-type').value;const id=document.getElementById('item-id').value;const isEdit=!!id;const fd=new FormData();fd.append('title',document.getElementById('f-title').value);fd.append('description',document.getElementById('f-description').value);fd.append('category',document.getElementById('f-category').value);fd.append('durationSeconds',document.getElementById('f-duration').value);fd.append('sortOrder',document.getElementById('f-sort').value);fd.append('isPublished',document.getElementById('f-published').checked?'true':'false');fd.append('isFeatured',document.getElementById('f-featured').checked?'true':'false');fd.append('isActive',document.getElementById('f-active').checked?'true':'false');const audio=document.getElementById('f-audio').files[0];const thumb=document.getElementById('f-thumb').files[0];if(audio)fd.append('audio',audio);if(thumb)fd.append('thumbnail',thumb);if(!isEdit&&!audio)return toast('Audio file required',true);const btn=document.getElementById('submit-btn');btn.disabled=true;btn.textContent='Uploading...';const endpoint=type==='meditation'?'meditations':'sounds';const url=isEdit?API+'/api/'+endpoint+'/'+id:API+'/api/'+endpoint;const method=isEdit?'PUT':'POST';const pb=document.getElementById('prog-bar'),pf=document.getElementById('prog-fill'),pt=document.getElementById('prog-text');if(audio||thumb){pb.style.display='block';pt.style.display='block';pf.style.width='0%';pt.textContent='Uploading 0%';}const xhr=new XMLHttpRequest();xhr.open(method,url);xhr.upload.onprogress=(ev)=>{if(ev.lengthComputable){const p=Math.round((ev.loaded/ev.total)*100);pf.style.width=p+'%';pt.textContent='Uploading '+p+'%';}};xhr.onload=()=>{btn.disabled=false;btn.textContent='Save';let j={};try{j=JSON.parse(xhr.responseText);}catch(_){}if(xhr.status>=200&&xhr.status<300){toast(isEdit?'Updated ✓':'Created ✓');closeModal();if(type==='meditation')loadMeditations();else loadSounds();}else{toast('Error: '+(j.error||xhr.statusText),true);}};xhr.onerror=()=>{btn.disabled=false;btn.textContent='Save';toast('Network error',true);};xhr.send(fd);});
+</div>\`).join('');
+}
+
+function openForm(type,editId){
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('item-type').value=type;
+  document.getElementById('item-id').value=editId||'';
+  document.getElementById('modal-title').textContent=editId?'Edit':(type==='meditation'?'Add Meditation':'Add Sound');
+  document.getElementById('item-form').reset();
+  document.getElementById('f-published').checked=true;
+  document.getElementById('f-active').checked=true;
+  document.getElementById('curr-audio').textContent='';
+  document.getElementById('curr-thumb').textContent='';
+  document.getElementById('prog-bar').style.display='none';
+  document.getElementById('prog-text').style.display='none';
+  if(editId){
+    const list=type==='meditation'?data.meditations:data.sounds;
+    const it=list.find(i=>i._id===editId);
+    if(it){
+      document.getElementById('f-title').value=it.title||'';
+      document.getElementById('f-description').value=it.description||'';
+      document.getElementById('f-category').value=it.category||'';
+      document.getElementById('f-sort').value=it.sortOrder||0;
+      document.getElementById('f-duration').value=it.durationSeconds||0;
+      document.getElementById('f-published').checked=!!it.isPublished;
+      document.getElementById('f-featured').checked=!!it.isFeatured;
+      document.getElementById('f-active').checked=!!it.isActive;
+      document.getElementById('curr-audio').textContent=it.audioUrl?'Current: Uploaded ✓':'';
+      document.getElementById('curr-thumb').textContent=it.thumbnailUrl?'Current: Uploaded ✓':'';
+    }
+  }
+}
+
+function closeModal(){
+  document.getElementById('modal').classList.remove('open');
+}
+
+document.getElementById('item-form').addEventListener('submit',async(e)=>{
+  e.preventDefault();
+  const type=document.getElementById('item-type').value;
+  const id=document.getElementById('item-id').value;
+  const isEdit=!!id;
+  const fd=new FormData();
+  fd.append('title',document.getElementById('f-title').value);
+  fd.append('description',document.getElementById('f-description').value);
+  fd.append('category',document.getElementById('f-category').value);
+  fd.append('durationSeconds',document.getElementById('f-duration').value);
+  fd.append('sortOrder',document.getElementById('f-sort').value);
+  fd.append('isPublished',document.getElementById('f-published').checked?'true':'false');
+  fd.append('isFeatured',document.getElementById('f-featured').checked?'true':'false');
+  fd.append('isActive',document.getElementById('f-active').checked?'true':'false');
+  const audio=document.getElementById('f-audio').files[0];
+  const thumb=document.getElementById('f-thumb').files[0];
+  if(audio)fd.append('audio',audio);
+  if(thumb)fd.append('thumbnail',thumb);
+  if(!isEdit&&!audio)return toast('Audio file required',true);
+  const btn=document.getElementById('submit-btn');
+  btn.disabled=true;
+  btn.textContent='Uploading...';
+  const endpoint=type==='meditation'?'meditations':'sounds';
+  const url=isEdit?API+'/api/'+endpoint+'/'+id:API+'/api/'+endpoint;
+  const method=isEdit?'PUT':'POST';
+  const pb=document.getElementById('prog-bar'),pf=document.getElementById('prog-fill'),pt=document.getElementById('prog-text');
+  if(audio||thumb){
+    pb.style.display='block';
+    pt.style.display='block';
+    pf.style.width='0%';
+    pt.textContent='Uploading 0%';
+  }
+  const xhr=new XMLHttpRequest();
+  xhr.open(method,url);
+  xhr.upload.onprogress=(ev)=>{
+    if(ev.lengthComputable){
+      const p=Math.round((ev.loaded/ev.total)*100);
+      pf.style.width=p+'%';
+      pt.textContent='Uploading '+p+'%';
+    }
+  };
+  xhr.onload=()=>{
+    btn.disabled=false;
+    btn.textContent='Save';
+    let j={};
+    try{j=JSON.parse(xhr.responseText);}catch(_){}
+    if(xhr.status>=200&&xhr.status<300){
+      console.log('[ADMIN]', isEdit?'Updated':'Created', type, '→', j.item?._id);
+      toast(isEdit?'Updated ✓':'Created ✓');
+      closeModal();
+      if(type==='meditation')loadMeditations();
+      else loadSounds();
+    }else{
+      console.error('[ADMIN] Upload error:', j.error||xhr.statusText);
+      toast('Error: '+(j.error||xhr.statusText),true);
+    }
+  };
+  xhr.onerror=()=>{
+    btn.disabled=false;
+    btn.textContent='Save';
+    toast('Network error',true);
+  };
+  xhr.send(fd);
+});
+
 function editItem(t,id){openForm(t,id);}
-async function deleteItem(type,id){if(!confirm('Delete permanently?'))return;const endpoint=type==='meditation'?'meditations':'sounds';try{const r=await fetch(API+'/api/'+endpoint+'/'+id,{method:'DELETE'});if(!r.ok)throw new Error('Delete failed');toast('Deleted ✓');if(type==='meditation')loadMeditations();else loadSounds();}catch(e){toast('Error: '+e.message,true);}}
-function previewAudio(u){if(!u)return toast('No audio',true);new Audio(u).play().catch(()=>toast('Cannot play',true));}
-function fmtDur(s){if(!s)return '0:00';const m=Math.floor(s/60),x=s%60;return m+':'+String(x).padStart(2,'0');}
-function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-let toastTimer;function toast(m,err){const el=document.getElementById('toast');el.textContent=m;el.classList.toggle('error',err);el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3000);}
+
+async function deleteItem(type,id){
+  if(!confirm('Delete permanently?'))return;
+  const endpoint=type==='meditation'?'meditations':'sounds';
+  try{
+    const r=await fetch(API+'/api/'+endpoint+'/'+id,{method:'DELETE'});
+    if(!r.ok)throw new Error('Delete failed');
+    console.log('[ADMIN] Deleted', type, id);
+    toast('Deleted ✓');
+    if(type==='meditation')loadMeditations();
+    else loadSounds();
+  }catch(e){
+    console.error('[ADMIN] Delete error:', e);
+    toast('Error: '+e.message,true);
+  }
+}
+
+function previewAudio(u){
+  if(!u)return toast('No audio',true);
+  console.log('[ADMIN] Preview:', u);
+  new Audio(u).play().catch(()=>toast('Cannot play',true));
+}
+
+function fmtDur(s){
+  if(!s)return '0:00';
+  const m=Math.floor(s/60),x=s%60;
+  return m+':'+String(x).padStart(2,'0');
+}
+
+function esc(s){
+  return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let toastTimer;
+function toast(m,err){
+  const el=document.getElementById('toast');
+  el.textContent=m;
+  el.classList.toggle('error',err);
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),3000);
+}
+
 loadMeditations();
 </script>
 </body>
