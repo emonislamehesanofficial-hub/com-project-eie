@@ -1,5 +1,5 @@
 // ============================================================
-// SERENE BACKEND v3.0 — Auto-duration + Fixed
+// SERENE BACKEND v3.1 — Music-metadata v7 + Robust duration
 // ============================================================
 
 const express = require('express');
@@ -7,7 +7,15 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const mm = require('music-metadata');
+
+// ⭐ Optional — graceful fallback if not installed
+let mm = null;
+try {
+  mm = require('music-metadata');
+  console.log('✅ music-metadata loaded');
+} catch (e) {
+  console.warn('⚠️  music-metadata not available — using file-size estimate');
+}
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -52,6 +60,9 @@ const uploadFields = upload.fields([
   { name: 'thumbnail', maxCount: 1 }
 ]);
 
+// ============================================================
+// SCHEMAS
+// ============================================================
 const meditationSchema = new mongoose.Schema({
   title:           { type: String, required: true },
   description:     { type: String, default: '' },
@@ -89,6 +100,9 @@ const soundSchema = new mongoose.Schema({
 const Meditation = mongoose.model('Meditation', meditationSchema);
 const Sound      = mongoose.model('Sound',      soundSchema);
 
+// ============================================================
+// HELPERS
+// ============================================================
 const baseUrl = (req) => {
   const envBase = process.env.BASE_URL;
   if (envBase && envBase.startsWith('http')) return envBase.replace(/^http:\/\//, 'https://');
@@ -105,13 +119,29 @@ const extractRelative = (url, category, kind) => {
   return m ? m[0] : null;
 };
 
-// ⭐ AUTO-DURATION helper
+// ⭐ AUTO-DURATION with fallback
 async function detectDuration(filePath) {
+  // Try music-metadata first
+  if (mm && typeof mm.parseFile === 'function') {
+    try {
+      const meta = await mm.parseFile(filePath);
+      const dur = Math.round(meta.format.duration || 0);
+      if (dur > 0) {
+        console.log(`[DURATION] ${path.basename(filePath)} → ${dur}s (metadata)`);
+        return dur;
+      }
+    } catch (e) {
+      console.warn('[DURATION] metadata parse failed:', e.message);
+    }
+  }
+  // Fallback: file-size estimate for ~128kbps MP3
   try {
-    const meta = await mm.parseFile(filePath, { duration: true });
-    return Math.round(meta.format.duration || 0);
+    const stats = fs.statSync(filePath);
+    const estimated = Math.round(stats.size / 16000); // 16 KB per second
+    console.log(`[DURATION] ${path.basename(filePath)} → ~${estimated}s (size estimate)`);
+    return estimated;
   } catch (e) {
-    console.warn('[DURATION] parse failed:', e.message);
+    console.warn('[DURATION] stat failed:', e.message);
     return 0;
   }
 }
@@ -119,9 +149,7 @@ async function detectDuration(filePath) {
 async function autoDuration(filePath, manualValue) {
   const manual = parseInt(manualValue || '0', 10);
   if (manual > 0) return manual;
-  const d = await detectDuration(filePath);
-  console.log(`[DURATION] ${filePath} → ${d}s`);
-  return d;
+  return await detectDuration(filePath);
 }
 
 // ============================================================
@@ -133,8 +161,12 @@ app.get('/api/meditations', async (req, res) => {
     if (req.query.published === 'true') q.isPublished = true;
     if (req.query.active === 'true')    q.isActive    = true;
     const items = await Meditation.find(q).sort({ sortOrder: 1, createdAt: -1 });
+    console.log(`[API] /api/meditations → ${items.length} items`);
     res.json({ items });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[API] meditations error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/meditations/:id', async (req, res) => {
@@ -153,21 +185,25 @@ app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) =>
     const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     const duration = await autoDuration(audio.path, req.body.durationSeconds);
     const doc = await Meditation.create({
-      title: req.body.title || 'Untitled',
-      description: req.body.description || '',
-      category: req.body.category || 'General',
+      title:           req.body.title || 'Untitled',
+      description:     req.body.description || '',
+      category:        req.body.category || 'General',
       tags,
-      audioUrl: buildFileUrl(req, audio.path),
-      thumbnailUrl: thumb ? buildFileUrl(req, thumb.path) : '',
+      audioUrl:        buildFileUrl(req, audio.path),
+      thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: duration,
-      fileSize: audio.size,
-      sortOrder: parseInt(req.body.sortOrder || '0', 10),
-      isPublished: req.body.isPublished !== 'false',
-      isFeatured: req.body.isFeatured === 'true',
-      isActive: req.body.isActive !== 'false'
+      fileSize:        audio.size,
+      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
+      isPublished:     req.body.isPublished !== 'false',
+      isFeatured:      req.body.isFeatured === 'true',
+      isActive:        req.body.isActive !== 'false'
     });
+    console.log(`[ADMIN] ✅ Meditation: "${doc.title}" ${doc.durationSeconds}s`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation create error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res) => {
@@ -182,7 +218,8 @@ app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res)
       doc.fileSize = audio.size;
       doc.durationSeconds = await autoDuration(audio.path, req.body.durationSeconds);
     } else if (req.body.durationSeconds !== undefined) {
-      doc.durationSeconds = parseInt(req.body.durationSeconds, 10) || doc.durationSeconds;
+      const d = parseInt(req.body.durationSeconds, 10);
+      if (d > 0) doc.durationSeconds = d;
     }
     const thumb = req.files?.thumbnail?.[0];
     if (thumb) {
@@ -200,8 +237,12 @@ app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res)
     if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
+    console.log(`[ADMIN] ✏️ Meditation: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation update error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/meditations/:id', async (req, res) => {
@@ -212,8 +253,12 @@ app.delete('/api/meditations/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'meditations', 'thumbs');
     if (t) fs.unlink(t, () => {});
+    console.log(`[ADMIN] 🗑️ Meditation: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Meditation delete error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ============================================================
@@ -225,8 +270,12 @@ app.get('/api/sounds', async (req, res) => {
     if (req.query.published === 'true') q.isPublished = true;
     if (req.query.active === 'true')    q.isActive    = true;
     const items = await Sound.find(q).sort({ sortOrder: 1, createdAt: -1 });
+    console.log(`[API] /api/sounds → ${items.length} items`);
     res.json({ items });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[API] sounds error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/sounds/:id', async (req, res) => {
@@ -245,21 +294,25 @@ app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
     const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
     const duration = await autoDuration(audio.path, req.body.durationSeconds);
     const doc = await Sound.create({
-      title: req.body.title || 'Untitled',
-      description: req.body.description || '',
-      category: req.body.category || 'Ambient',
+      title:           req.body.title || 'Untitled',
+      description:     req.body.description || '',
+      category:        req.body.category || 'Ambient',
       tags,
-      audioUrl: buildFileUrl(req, audio.path),
-      thumbnailUrl: thumb ? buildFileUrl(req, thumb.path) : '',
+      audioUrl:        buildFileUrl(req, audio.path),
+      thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: duration,
-      fileSize: audio.size,
-      sortOrder: parseInt(req.body.sortOrder || '0', 10),
-      isPublished: req.body.isPublished !== 'false',
-      isFeatured: req.body.isFeatured === 'true',
-      isActive: req.body.isActive !== 'false'
+      fileSize:        audio.size,
+      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
+      isPublished:     req.body.isPublished !== 'false',
+      isFeatured:      req.body.isFeatured === 'true',
+      isActive:        req.body.isActive !== 'false'
     });
+    console.log(`[ADMIN] ✅ Sound: "${doc.title}" ${doc.durationSeconds}s`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound create error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
@@ -274,7 +327,8 @@ app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
       doc.fileSize = audio.size;
       doc.durationSeconds = await autoDuration(audio.path, req.body.durationSeconds);
     } else if (req.body.durationSeconds !== undefined) {
-      doc.durationSeconds = parseInt(req.body.durationSeconds, 10) || doc.durationSeconds;
+      const d = parseInt(req.body.durationSeconds, 10);
+      if (d > 0) doc.durationSeconds = d;
     }
     const thumb = req.files?.thumbnail?.[0];
     if (thumb) {
@@ -292,8 +346,12 @@ app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
     if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
+    console.log(`[ADMIN] ✏️ Sound: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound update error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.delete('/api/sounds/:id', async (req, res) => {
@@ -304,16 +362,21 @@ app.delete('/api/sounds/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'sounds', 'thumbs');
     if (t) fs.unlink(t, () => {});
+    console.log(`[ADMIN] 🗑️ Sound: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[ADMIN] ❌ Sound delete error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
+// Health
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '3.0' });
+  res.json({ status: 'ok', service: 'serene-backend', version: '3.1', hasMusicMetadata: !!mm });
 });
 
 // ============================================================
-// ADMIN PANEL (shortened — same as before with music duration hint)
+// ADMIN PANEL
 // ============================================================
 const ADMIN_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -382,14 +445,14 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
   <div class="main">
     <div class="page active" id="page-meditations">
       <div class="header">
-        <div><h1>Meditations</h1><div class="sub">Duration auto-detected from audio file</div></div>
+        <div><h1>Meditations</h1><div class="sub">Duration auto-detected</div></div>
         <button class="btn btn-primary" onclick="openForm('meditation')">+ Add</button>
       </div>
       <div id="grid-meditations" class="grid"><div class="empty"><div class="spinner"></div></div></div>
     </div>
     <div class="page" id="page-sounds">
       <div class="header">
-        <div><h1>Sounds</h1><div class="sub">Duration auto-detected from audio file</div></div>
+        <div><h1>Sounds</h1><div class="sub">Duration auto-detected</div></div>
         <button class="btn btn-primary" onclick="openForm('sound')">+ Add</button>
       </div>
       <div id="grid-sounds" class="grid"><div class="empty"><div class="spinner"></div></div></div>
@@ -546,5 +609,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Serene v3.0 on port ${PORT}`);
+  console.log(`🚀 Serene v3.1 on port ${PORT}`);
+  console.log(`📊 music-metadata: ${mm ? 'enabled' : 'fallback mode'}`);
 });
