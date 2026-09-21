@@ -1,5 +1,6 @@
 // ============================================================
-// SERENE BACKEND v3.1 — Music-metadata v7 + Robust duration
+// SERENE BACKEND v4.0 — Minimal Admin
+// Form: Title, Description, Image, Audio → সব auto
 // ============================================================
 
 const express = require('express');
@@ -8,13 +9,12 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// ⭐ Optional — graceful fallback if not installed
 let mm = null;
 try {
   mm = require('music-metadata');
   console.log('✅ music-metadata loaded');
 } catch (e) {
-  console.warn('⚠️  music-metadata not available — using file-size estimate');
+  console.warn('⚠️  music-metadata not available — file-size estimate will be used');
 }
 
 const app = express();
@@ -67,7 +67,6 @@ const meditationSchema = new mongoose.Schema({
   title:           { type: String, required: true },
   description:     { type: String, default: '' },
   category:        { type: String, default: 'General' },
-  tags:            [{ type: String }],
   audioUrl:        { type: String, required: true },
   thumbnailUrl:    { type: String, default: '' },
   durationSeconds: { type: Number, default: 0 },
@@ -84,7 +83,6 @@ const soundSchema = new mongoose.Schema({
   title:           { type: String, required: true },
   description:     { type: String, default: '' },
   category:        { type: String, default: 'Ambient' },
-  tags:            [{ type: String }],
   audioUrl:        { type: String, required: true },
   thumbnailUrl:    { type: String, default: '' },
   durationSeconds: { type: Number, default: 0 },
@@ -119,26 +117,26 @@ const extractRelative = (url, category, kind) => {
   return m ? m[0] : null;
 };
 
-// ⭐ AUTO-DURATION with fallback
+// ⭐ AUTO-DURATION
 async function detectDuration(filePath) {
-  // Try music-metadata first
+  // Try exact metadata
   if (mm && typeof mm.parseFile === 'function') {
     try {
       const meta = await mm.parseFile(filePath);
       const dur = Math.round(meta.format.duration || 0);
       if (dur > 0) {
-        console.log(`[DURATION] ${path.basename(filePath)} → ${dur}s (metadata)`);
+        console.log(`[DURATION] ${path.basename(filePath)} → ${dur}s (exact)`);
         return dur;
       }
     } catch (e) {
       console.warn('[DURATION] metadata parse failed:', e.message);
     }
   }
-  // Fallback: file-size estimate for ~128kbps MP3
+  // Fallback: file size estimate (~128kbps = 16KB/s)
   try {
     const stats = fs.statSync(filePath);
-    const estimated = Math.round(stats.size / 16000); // 16 KB per second
-    console.log(`[DURATION] ${path.basename(filePath)} → ~${estimated}s (size estimate)`);
+    const estimated = Math.max(1, Math.round(stats.size / 16000));
+    console.log(`[DURATION] ${path.basename(filePath)} → ~${estimated}s (estimate)`);
     return estimated;
   } catch (e) {
     console.warn('[DURATION] stat failed:', e.message);
@@ -146,34 +144,17 @@ async function detectDuration(filePath) {
   }
 }
 
-async function autoDuration(filePath, manualValue) {
-  const manual = parseInt(manualValue || '0', 10);
-  if (manual > 0) return manual;
-  return await detectDuration(filePath);
-}
-
 // ============================================================
-// MEDITATIONS
+// MEDITATIONS API
 // ============================================================
 app.get('/api/meditations', async (req, res) => {
   try {
     const q = {};
     if (req.query.published === 'true') q.isPublished = true;
     if (req.query.active === 'true')    q.isActive    = true;
-    const items = await Meditation.find(q).sort({ sortOrder: 1, createdAt: -1 });
-    console.log(`[API] /api/meditations → ${items.length} items`);
+    const items = await Meditation.find(q).sort({ createdAt: -1 });
+    console.log(`[API] meditations → ${items.length}`);
     res.json({ items });
-  } catch (e) {
-    console.error('[API] meditations error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/meditations/:id', async (req, res) => {
-  try {
-    const doc = await Meditation.findById(req.params.id);
-    if (!doc) return res.status(404).json({ error: 'Not found' });
-    res.json(doc);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -182,26 +163,20 @@ app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) =>
     const audio = req.files?.audio?.[0];
     if (!audio) return res.status(400).json({ error: 'Audio required' });
     const thumb = req.files?.thumbnail?.[0];
-    const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-    const duration = await autoDuration(audio.path, req.body.durationSeconds);
+    const duration = await detectDuration(audio.path);
     const doc = await Meditation.create({
       title:           req.body.title || 'Untitled',
       description:     req.body.description || '',
       category:        req.body.category || 'General',
-      tags,
       audioUrl:        buildFileUrl(req, audio.path),
       thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: duration,
-      fileSize:        audio.size,
-      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
-      isPublished:     req.body.isPublished !== 'false',
-      isFeatured:      req.body.isFeatured === 'true',
-      isActive:        req.body.isActive !== 'false'
+      fileSize:        audio.size
     });
-    console.log(`[ADMIN] ✅ Meditation: "${doc.title}" ${doc.durationSeconds}s`);
+    console.log(`[ADMIN] ✅ Meditation: "${doc.title}" (${doc.durationSeconds}s)`);
     res.json({ ok: true, item: doc });
   } catch (e) {
-    console.error('[ADMIN] ❌ Meditation create error:', e.message);
+    console.error('[ADMIN] ❌ Create error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -216,10 +191,7 @@ app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res)
       if (old) fs.unlink(old, () => {});
       doc.audioUrl = buildFileUrl(req, audio.path);
       doc.fileSize = audio.size;
-      doc.durationSeconds = await autoDuration(audio.path, req.body.durationSeconds);
-    } else if (req.body.durationSeconds !== undefined) {
-      const d = parseInt(req.body.durationSeconds, 10);
-      if (d > 0) doc.durationSeconds = d;
+      doc.durationSeconds = await detectDuration(audio.path);
     }
     const thumb = req.files?.thumbnail?.[0];
     if (thumb) {
@@ -230,19 +202,10 @@ app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res)
     if (req.body.title !== undefined) doc.title = req.body.title;
     if (req.body.description !== undefined) doc.description = req.body.description;
     if (req.body.category !== undefined) doc.category = req.body.category;
-    if (req.body.tags !== undefined) doc.tags = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
-    if (req.body.sortOrder !== undefined) doc.sortOrder = parseInt(req.body.sortOrder, 10);
-    if (req.body.isPublished !== undefined) doc.isPublished = req.body.isPublished === 'true';
-    if (req.body.isFeatured !== undefined) doc.isFeatured = req.body.isFeatured === 'true';
-    if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
-    console.log(`[ADMIN] ✏️ Meditation: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) {
-    console.error('[ADMIN] ❌ Meditation update error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/meditations/:id', async (req, res) => {
@@ -253,36 +216,21 @@ app.delete('/api/meditations/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'meditations', 'thumbs');
     if (t) fs.unlink(t, () => {});
-    console.log(`[ADMIN] 🗑️ Meditation: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) {
-    console.error('[ADMIN] ❌ Meditation delete error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================
-// SOUNDS
+// SOUNDS API
 // ============================================================
 app.get('/api/sounds', async (req, res) => {
   try {
     const q = {};
     if (req.query.published === 'true') q.isPublished = true;
     if (req.query.active === 'true')    q.isActive    = true;
-    const items = await Sound.find(q).sort({ sortOrder: 1, createdAt: -1 });
-    console.log(`[API] /api/sounds → ${items.length} items`);
+    const items = await Sound.find(q).sort({ createdAt: -1 });
+    console.log(`[API] sounds → ${items.length}`);
     res.json({ items });
-  } catch (e) {
-    console.error('[API] sounds error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/api/sounds/:id', async (req, res) => {
-  try {
-    const doc = await Sound.findById(req.params.id);
-    if (!doc) return res.status(404).json({ error: 'Not found' });
-    res.json(doc);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -291,26 +239,20 @@ app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
     const audio = req.files?.audio?.[0];
     if (!audio) return res.status(400).json({ error: 'Audio required' });
     const thumb = req.files?.thumbnail?.[0];
-    const tags = req.body.tags ? req.body.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
-    const duration = await autoDuration(audio.path, req.body.durationSeconds);
+    const duration = await detectDuration(audio.path);
     const doc = await Sound.create({
       title:           req.body.title || 'Untitled',
       description:     req.body.description || '',
       category:        req.body.category || 'Ambient',
-      tags,
       audioUrl:        buildFileUrl(req, audio.path),
       thumbnailUrl:    thumb ? buildFileUrl(req, thumb.path) : '',
       durationSeconds: duration,
-      fileSize:        audio.size,
-      sortOrder:       parseInt(req.body.sortOrder || '0', 10),
-      isPublished:     req.body.isPublished !== 'false',
-      isFeatured:      req.body.isFeatured === 'true',
-      isActive:        req.body.isActive !== 'false'
+      fileSize:        audio.size
     });
-    console.log(`[ADMIN] ✅ Sound: "${doc.title}" ${doc.durationSeconds}s`);
+    console.log(`[ADMIN] ✅ Sound: "${doc.title}" (${doc.durationSeconds}s)`);
     res.json({ ok: true, item: doc });
   } catch (e) {
-    console.error('[ADMIN] ❌ Sound create error:', e.message);
+    console.error('[ADMIN] ❌ Create error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -325,10 +267,7 @@ app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
       if (old) fs.unlink(old, () => {});
       doc.audioUrl = buildFileUrl(req, audio.path);
       doc.fileSize = audio.size;
-      doc.durationSeconds = await autoDuration(audio.path, req.body.durationSeconds);
-    } else if (req.body.durationSeconds !== undefined) {
-      const d = parseInt(req.body.durationSeconds, 10);
-      if (d > 0) doc.durationSeconds = d;
+      doc.durationSeconds = await detectDuration(audio.path);
     }
     const thumb = req.files?.thumbnail?.[0];
     if (thumb) {
@@ -339,19 +278,10 @@ app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
     if (req.body.title !== undefined) doc.title = req.body.title;
     if (req.body.description !== undefined) doc.description = req.body.description;
     if (req.body.category !== undefined) doc.category = req.body.category;
-    if (req.body.tags !== undefined) doc.tags = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
-    if (req.body.sortOrder !== undefined) doc.sortOrder = parseInt(req.body.sortOrder, 10);
-    if (req.body.isPublished !== undefined) doc.isPublished = req.body.isPublished === 'true';
-    if (req.body.isFeatured !== undefined) doc.isFeatured = req.body.isFeatured === 'true';
-    if (req.body.isActive !== undefined) doc.isActive = req.body.isActive === 'true';
     doc.updatedAt = new Date();
     await doc.save();
-    console.log(`[ADMIN] ✏️ Sound: "${doc.title}"`);
     res.json({ ok: true, item: doc });
-  } catch (e) {
-    console.error('[ADMIN] ❌ Sound update error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/sounds/:id', async (req, res) => {
@@ -362,21 +292,16 @@ app.delete('/api/sounds/:id', async (req, res) => {
     if (a) fs.unlink(a, () => {});
     const t = extractRelative(doc.thumbnailUrl, 'sounds', 'thumbs');
     if (t) fs.unlink(t, () => {});
-    console.log(`[ADMIN] 🗑️ Sound: "${doc.title}"`);
     res.json({ ok: true });
-  } catch (e) {
-    console.error('[ADMIN] ❌ Sound delete error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Health
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', service: 'serene-backend', version: '3.1', hasMusicMetadata: !!mm });
+  res.json({ status: 'ok', version: '4.0', hasMusicMetadata: !!mm });
 });
 
 // ============================================================
-// ADMIN PANEL
+// ADMIN PANEL — ONLY 4 FIELDS
 // ============================================================
 const ADMIN_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -385,7 +310,7 @@ const ADMIN_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Serene Admin</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif}
 body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 .app{display:flex;min-height:100vh}
 .sidebar{width:220px;background:#16181d;border-right:1px solid #23262d;padding:20px 0}
@@ -398,7 +323,7 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:12px}
 .header h1{font-size:22px}
 .sub{color:#9aa0a6;font-size:13px;margin-top:4px}
-.btn{padding:10px 18px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+.btn{padding:10px 18px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
 .btn-primary{background:#6366f1;color:#fff}
 .btn-primary:hover{background:#4f46e5}
 .btn-secondary{background:#23262d;color:#e6e8eb}
@@ -413,26 +338,26 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 .card-actions{display:flex;gap:6px;flex-wrap:wrap}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center;z-index:1000;padding:20px}
 .modal-overlay.open{display:flex}
-.modal{background:#16181d;border-radius:16px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;padding:24px;border:1px solid #23262d}
+.modal{background:#16181d;border-radius:16px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:24px;border:1px solid #23262d}
 .modal h2{font-size:18px;margin-bottom:20px}
-.form-group{margin-bottom:14px}
-.form-group label{display:block;font-size:12px;color:#9aa0a6;margin-bottom:6px;font-weight:600}
-.form-group input[type=text],.form-group input[type=number],.form-group textarea{width:100%;padding:10px 12px;border:1px solid #23262d;border-radius:8px;background:#0f1115;color:#e6e8eb;font-size:14px}
-.form-group textarea{resize:vertical;min-height:60px}
-.form-group input[type=file]{padding:8px;background:#0f1115;border:1px dashed #353a44;border-radius:8px;color:#9aa0a6;width:100%;font-size:13px}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.checkbox-row{display:flex;gap:20px;padding:12px 0;flex-wrap:wrap}
-.checkbox-row label{display:flex;align-items:center;gap:6px;color:#e6e8eb;font-size:13px;cursor:pointer;font-weight:500}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;color:#9aa0a6;margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.form-group input[type=text],.form-group textarea{width:100%;padding:11px 13px;border:1px solid #23262d;border-radius:8px;background:#0f1115;color:#e6e8eb;font-size:14px;font-family:inherit}
+.form-group textarea{resize:vertical;min-height:70px}
+.form-group input[type=file]{padding:9px;background:#0f1115;border:1px dashed #353a44;border-radius:8px;color:#9aa0a6;width:100%;font-size:13px;cursor:pointer}
+.form-group input[type=file]:hover{border-color:#6366f1}
+.file-hint{font-size:11px;color:#6b7280;margin-top:4px;display:block}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid #23262d}
 .empty{text-align:center;padding:60px 20px;color:#6b7280;font-size:14px}
-.toast{position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:14px 20px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;transition:all .3s;z-index:2000}
-.toast.show{opacity:1}
+.toast{position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:14px 20px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;transform:translateY(20px);transition:all .3s;z-index:2000}
+.toast.show{opacity:1;transform:translateY(0)}
 .toast.error{background:#ef4444}
 .spinner{display:inline-block;width:32px;height:32px;border:3px solid #23262d;border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .progress-bar{width:100%;height:6px;background:#23262d;border-radius:3px;overflow:hidden;margin-top:12px}
 .progress-fill{height:100%;background:#6366f1;width:0%;transition:width .3s}
-@media(max-width:768px){.app{flex-direction:column}.sidebar{width:100%;flex-direction:row;padding:8px;overflow-x:auto}.logo{display:none}.nav-item{padding:10px 16px;border-left:none;border-bottom:3px solid transparent}.nav-item.active{border-left:none;border-bottom-color:#a5b4fc}.main{padding:20px}.form-row{grid-template-columns:1fr}}
+.duration-badge{background:#4f46e522;color:#a5b4fc;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+@media(max-width:768px){.app{flex-direction:column}.sidebar{width:100%;flex-direction:row;padding:8px;overflow-x:auto}.logo{display:none}.nav-item{padding:10px 16px;border-left:none;border-bottom:3px solid transparent;white-space:nowrap}.nav-item.active{border-left:none;border-bottom-color:#a5b4fc}.main{padding:20px}}
 </style>
 </head>
 <body>
@@ -445,15 +370,15 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
   <div class="main">
     <div class="page active" id="page-meditations">
       <div class="header">
-        <div><h1>Meditations</h1><div class="sub">Duration auto-detected</div></div>
-        <button class="btn btn-primary" onclick="openForm('meditation')">+ Add</button>
+        <div><h1>Meditations</h1><div class="sub">Duration auto-detected from audio</div></div>
+        <button class="btn btn-primary" onclick="openForm('meditation')">+ Add New</button>
       </div>
       <div id="grid-meditations" class="grid"><div class="empty"><div class="spinner"></div></div></div>
     </div>
     <div class="page" id="page-sounds">
       <div class="header">
-        <div><h1>Sounds</h1><div class="sub">Duration auto-detected</div></div>
-        <button class="btn btn-primary" onclick="openForm('sound')">+ Add</button>
+        <div><h1>Sounds</h1><div class="sub">Duration auto-detected from audio</div></div>
+        <button class="btn btn-primary" onclick="openForm('sound')">+ Add New</button>
       </div>
       <div id="grid-sounds" class="grid"><div class="empty"><div class="spinner"></div></div></div>
     </div>
@@ -462,25 +387,35 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 
 <div class="modal-overlay" id="modal">
   <div class="modal">
-    <h2 id="modal-title">Add</h2>
+    <h2 id="modal-title">Add New</h2>
     <form id="item-form">
       <input type="hidden" id="item-type">
       <input type="hidden" id="item-id">
-      <div class="form-group"><label>Title *</label><input type="text" id="f-title" required></div>
-      <div class="form-group"><label>Description</label><textarea id="f-description"></textarea></div>
-      <div class="form-row">
-        <div class="form-group"><label>Category</label><input type="text" id="f-category"></div>
-        <div class="form-group"><label>Sort Order</label><input type="number" id="f-sort" value="0"></div>
+
+      <div class="form-group">
+        <label>Title *</label>
+        <input type="text" id="f-title" placeholder="Sleep Ocean Waves" required>
       </div>
-      <div class="form-group"><label>Duration (sec, optional — auto if empty)</label><input type="number" id="f-duration" value="0"></div>
-      <div class="form-group"><label>Audio File *</label><input type="file" id="f-audio" accept="audio/*"><small id="curr-audio" style="color:#6b7280;font-size:11px;"></small></div>
-      <div class="form-group"><label>Thumbnail Image</label><input type="file" id="f-thumb" accept="image/*"><small id="curr-thumb" style="color:#6b7280;font-size:11px;"></small></div>
-      <div class="checkbox-row">
-        <label><input type="checkbox" id="f-published" checked> Published</label>
-        <label><input type="checkbox" id="f-featured"> Featured</label>
-        <label><input type="checkbox" id="f-active" checked> Active</label>
+
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="f-description" placeholder="Optional description..."></textarea>
       </div>
+
+      <div class="form-group">
+        <label>Cover Image</label>
+        <input type="file" id="f-thumb" accept="image/*">
+        <small class="file-hint" id="curr-thumb"></small>
+      </div>
+
+      <div class="form-group">
+        <label>Audio File *</label>
+        <input type="file" id="f-audio" accept="audio/*">
+        <small class="file-hint" id="curr-audio"></small>
+      </div>
+
       <div class="progress-bar" id="prog-bar" style="display:none;"><div class="progress-fill" id="prog-fill"></div></div>
+
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
         <button type="submit" class="btn btn-primary" id="submit-btn">Save</button>
@@ -492,6 +427,7 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 <script>
 const API=window.location.origin;
 let data={meditations:[],sounds:[]};
+
 function switchPage(n,el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
@@ -499,38 +435,44 @@ function switchPage(n,el){
   el.classList.add('active');
   n==='meditations'?loadMeditations():loadSounds();
 }
+
 async function loadMeditations(){
   const g=document.getElementById('grid-meditations');
   g.innerHTML='<div class="empty"><div class="spinner"></div></div>';
-  try{const r=await fetch(API+'/api/meditations');const j=await r.json();data.meditations=j.items||[];render('meditation',data.meditations,g);}catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}
+  try{const r=await fetch(API+'/api/meditations');const j=await r.json();data.meditations=j.items||[];render('meditation',data.meditations,g);}
+  catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}
 }
+
 async function loadSounds(){
   const g=document.getElementById('grid-sounds');
   g.innerHTML='<div class="empty"><div class="spinner"></div></div>';
-  try{const r=await fetch(API+'/api/sounds');const j=await r.json();data.sounds=j.items||[];render('sound',data.sounds,g);}catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}
+  try{const r=await fetch(API+'/api/sounds');const j=await r.json();data.sounds=j.items||[];render('sound',data.sounds,g);}
+  catch(e){g.innerHTML='<div class="empty">Error: '+e.message+'</div>';}
 }
+
 function render(type,items,grid){
-  if(!items.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;">No '+type+'s yet.</div>';return;}
+  if(!items.length){grid.innerHTML='<div class="empty" style="grid-column:1/-1;">No '+type+'s yet. Click "+ Add New" to upload.</div>';return;}
   grid.innerHTML=items.map(item=>\`
 <div class="card">
 <img class="card-thumb" src="\${item.thumbnailUrl||''}" onerror="this.style.background='#23262d';this.src='';">
 <div class="card-body">
 <div class="card-title">\${esc(item.title)}</div>
-<div class="card-meta">\${esc(item.category)} • \${fmtDur(item.durationSeconds)}</div>
+<div class="card-meta">
+  <span class="duration-badge">\${fmtDur(item.durationSeconds)}</span>
+</div>
 <div class="card-actions">
-<button class="btn btn-secondary btn-sm" onclick="previewAudio('\${item.audioUrl}')">▶</button>
-<button class="btn btn-secondary btn-sm" onclick="openForm('\${type}','\${item._id}')">✏️</button>
-<button class="btn btn-danger btn-sm" onclick="del('\${type}','\${item._id}')">🗑️</button>
+<button class="btn btn-secondary btn-sm" onclick="previewAudio('\${item.audioUrl}')">▶ Play</button>
+<button class="btn btn-secondary btn-sm" onclick="openForm('\${type}','\${item._id}')">✏️ Edit</button>
+<button class="btn btn-danger btn-sm" onclick="del('\${type}','\${item._id}')">🗑️ Delete</button>
 </div></div></div>\`).join('');
 }
+
 function openForm(type,id){
   document.getElementById('modal').classList.add('open');
   document.getElementById('item-type').value=type;
   document.getElementById('item-id').value=id||'';
-  document.getElementById('modal-title').textContent=id?'Edit':'Add '+type;
+  document.getElementById('modal-title').textContent=id?'Edit':'Add New '+type;
   document.getElementById('item-form').reset();
-  document.getElementById('f-published').checked=true;
-  document.getElementById('f-active').checked=true;
   document.getElementById('curr-audio').textContent='';
   document.getElementById('curr-thumb').textContent='';
   document.getElementById('prog-bar').style.display='none';
@@ -539,18 +481,14 @@ function openForm(type,id){
     if(it){
       document.getElementById('f-title').value=it.title||'';
       document.getElementById('f-description').value=it.description||'';
-      document.getElementById('f-category').value=it.category||'';
-      document.getElementById('f-sort').value=it.sortOrder||0;
-      document.getElementById('f-duration').value=it.durationSeconds||0;
-      document.getElementById('f-published').checked=!!it.isPublished;
-      document.getElementById('f-featured').checked=!!it.isFeatured;
-      document.getElementById('f-active').checked=!!it.isActive;
-      document.getElementById('curr-audio').textContent=it.audioUrl?'Current ✓':'';
-      document.getElementById('curr-thumb').textContent=it.thumbnailUrl?'Current ✓':'';
+      document.getElementById('curr-audio').textContent=it.audioUrl?'Current audio: '+fmtDur(it.durationSeconds):'';
+      document.getElementById('curr-thumb').textContent=it.thumbnailUrl?'Current image uploaded ✓':'';
     }
   }
 }
+
 function closeModal(){document.getElementById('modal').classList.remove('open');}
+
 document.getElementById('item-form').addEventListener('submit',async(e)=>{
   e.preventDefault();
   const type=document.getElementById('item-type').value;
@@ -559,17 +497,11 @@ document.getElementById('item-form').addEventListener('submit',async(e)=>{
   const fd=new FormData();
   fd.append('title',document.getElementById('f-title').value);
   fd.append('description',document.getElementById('f-description').value);
-  fd.append('category',document.getElementById('f-category').value);
-  fd.append('durationSeconds',document.getElementById('f-duration').value);
-  fd.append('sortOrder',document.getElementById('f-sort').value);
-  fd.append('isPublished',document.getElementById('f-published').checked?'true':'false');
-  fd.append('isFeatured',document.getElementById('f-featured').checked?'true':'false');
-  fd.append('isActive',document.getElementById('f-active').checked?'true':'false');
   const audio=document.getElementById('f-audio').files[0];
   const thumb=document.getElementById('f-thumb').files[0];
   if(audio)fd.append('audio',audio);
   if(thumb)fd.append('thumbnail',thumb);
-  if(!isEdit&&!audio)return toast('Audio required',true);
+  if(!isEdit&&!audio)return toast('Audio file required',true);
   const btn=document.getElementById('submit-btn');
   btn.disabled=true;btn.textContent='Uploading...';
   const ep=type==='meditation'?'meditations':'sounds';
@@ -582,21 +514,29 @@ document.getElementById('item-form').addEventListener('submit',async(e)=>{
   xhr.onload=()=>{
     btn.disabled=false;btn.textContent='Save';
     let j={};try{j=JSON.parse(xhr.responseText);}catch(_){}
-    if(xhr.status>=200&&xhr.status<300){toast('✓ Saved');closeModal();type==='meditation'?loadMeditations():loadSounds();}
-    else toast('Error: '+(j.error||xhr.statusText),true);
+    if(xhr.status>=200&&xhr.status<300){
+      const dur=j.item?.durationSeconds;
+      toast(dur?'✓ Saved ('+fmtDur(dur)+')':'✓ Saved');
+      closeModal();
+      type==='meditation'?loadMeditations():loadSounds();
+    } else toast('Error: '+(j.error||xhr.statusText),true);
   };
   xhr.onerror=()=>{btn.disabled=false;btn.textContent='Save';toast('Network error',true);};
   xhr.send(fd);
 });
+
 async function del(type,id){
-  if(!confirm('Delete?'))return;
+  if(!confirm('Delete permanently?'))return;
   const ep=type==='meditation'?'meditations':'sounds';
-  try{const r=await fetch(API+'/api/'+ep+'/'+id,{method:'DELETE'});if(!r.ok)throw new Error('Failed');toast('✓ Deleted');type==='meditation'?loadMeditations():loadSounds();}catch(e){toast(e.message,true);}
+  try{const r=await fetch(API+'/api/'+ep+'/'+id,{method:'DELETE'});if(!r.ok)throw new Error('Failed');toast('✓ Deleted');type==='meditation'?loadMeditations():loadSounds();}
+  catch(e){toast(e.message,true);}
 }
+
 function previewAudio(u){if(!u)return;new Audio(u).play().catch(()=>toast('Cannot play',true));}
-function fmtDur(s){if(!s)return '0:00';const m=Math.floor(s/60),x=s%60;return m+':'+String(x).padStart(2,'0');}
+function fmtDur(s){if(!s)return '0:00';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;if(h>0)return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');return m+':'+String(x).padStart(2,'0');}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 let tt;function toast(m,err){const el=document.getElementById('toast');el.textContent=m;el.classList.toggle('error',err);el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500);}
+
 loadMeditations();
 </script>
 </body>
@@ -609,6 +549,6 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Serene v3.1 on port ${PORT}`);
-  console.log(`📊 music-metadata: ${mm ? 'enabled' : 'fallback mode'}`);
+  console.log(`🚀 Serene v4.0 on port ${PORT}`);
+  console.log(`📊 music-metadata: ${mm ? 'enabled' : 'fallback'}`);
 });
