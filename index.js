@@ -1,6 +1,5 @@
 // ============================================================
-// SERENE BACKEND v4.0 — Minimal Admin
-// Form: Title, Description, Image, Audio → সব auto
+// SERENE BACKEND v4.2 — 1 GB Upload + Auto Index Cleanup
 // ============================================================
 
 const express = require('express');
@@ -18,8 +17,8 @@ try {
 }
 
 const app = express();
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
 
 app.use((req, res, next) => {
@@ -30,14 +29,48 @@ app.use((req, res, next) => {
   next();
 });
 
+// ============================================================
+// MONGODB CONNECT
+// ============================================================
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/serene';
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB error:', err.message));
 
+// ============================================================
+// ⭐ AUTO-CLEANUP STALE INDEXES
+// ============================================================
+mongoose.connection.once('open', async () => {
+  console.log('🔧 Checking for stale indexes...');
+  for (const coll of ['sounds', 'meditations']) {
+    try {
+      const indexes = await mongoose.connection.db.collection(coll).indexes();
+      for (const idx of indexes) {
+        if (idx.name === 'id_1') {
+          await mongoose.connection.db.collection(coll).dropIndex('id_1');
+          console.log(`✅ Dropped stale index ${coll}.id_1`);
+        }
+      }
+    } catch (e) {
+      if (e.codeName !== 'NamespaceNotFound') {
+        console.warn(`⚠️ Index cleanup ${coll}:`, e.message);
+      }
+    }
+  }
+  console.log('✅ Index cleanup done');
+});
+
+// ============================================================
+// UPLOAD DIRECTORIES
+// ============================================================
 ['uploads/meditations/audio', 'uploads/meditations/thumbs',
  'uploads/sounds/audio', 'uploads/sounds/thumbs']
   .forEach(dir => fs.mkdirSync(dir, { recursive: true }));
+
+// ============================================================
+// ⭐ MULTER — 1 GB limit
+// ============================================================
+const MAX_FILE_SIZE_MB = 1024;   // 1 GB
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -52,13 +85,33 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ storage, limits: { fileSize: 300 * 1024 * 1024 } });
+const upload = multer({
+  storage,
+  limits: {
+    fileSize: MAX_FILE_SIZE_MB * 1024 * 1024,   // 1 GB
+    fieldSize: 10 * 1024 * 1024
+  }
+});
+
 const meditationUpload = (req, res, next) => { req.uploadCategory = 'meditations'; next(); };
 const soundUpload      = (req, res, next) => { req.uploadCategory = 'sounds';      next(); };
 const uploadFields = upload.fields([
   { name: 'audio', maxCount: 1 },
   { name: 'thumbnail', maxCount: 1 }
 ]);
+
+// ⭐ Multer error handler (file too large)
+const handleUploadErrors = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: `File too large. Max ${MAX_FILE_SIZE_MB} MB allowed`
+      });
+    }
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+  next(err);
+};
 
 // ============================================================
 // SCHEMAS
@@ -119,7 +172,6 @@ const extractRelative = (url, category, kind) => {
 
 // ⭐ AUTO-DURATION
 async function detectDuration(filePath) {
-  // Try exact metadata
   if (mm && typeof mm.parseFile === 'function') {
     try {
       const meta = await mm.parseFile(filePath);
@@ -132,7 +184,6 @@ async function detectDuration(filePath) {
       console.warn('[DURATION] metadata parse failed:', e.message);
     }
   }
-  // Fallback: file size estimate (~128kbps = 16KB/s)
   try {
     const stats = fs.statSync(filePath);
     const estimated = Math.max(1, Math.round(stats.size / 16000));
@@ -158,7 +209,7 @@ app.get('/api/meditations', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) => {
+app.post('/api/meditations', meditationUpload, uploadFields, handleUploadErrors, async (req, res) => {
   try {
     const audio = req.files?.audio?.[0];
     if (!audio) return res.status(400).json({ error: 'Audio required' });
@@ -173,7 +224,7 @@ app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) =>
       durationSeconds: duration,
       fileSize:        audio.size
     });
-    console.log(`[ADMIN] ✅ Meditation: "${doc.title}" (${doc.durationSeconds}s)`);
+    console.log(`[ADMIN] ✅ Meditation: "${doc.title}" (${doc.durationSeconds}s, ${(audio.size/1024/1024).toFixed(1)}MB)`);
     res.json({ ok: true, item: doc });
   } catch (e) {
     console.error('[ADMIN] ❌ Create error:', e.message);
@@ -181,7 +232,7 @@ app.post('/api/meditations', meditationUpload, uploadFields, async (req, res) =>
   }
 });
 
-app.put('/api/meditations/:id', meditationUpload, uploadFields, async (req, res) => {
+app.put('/api/meditations/:id', meditationUpload, uploadFields, handleUploadErrors, async (req, res) => {
   try {
     const doc = await Meditation.findById(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Not found' });
@@ -234,7 +285,7 @@ app.get('/api/sounds', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
+app.post('/api/sounds', soundUpload, uploadFields, handleUploadErrors, async (req, res) => {
   try {
     const audio = req.files?.audio?.[0];
     if (!audio) return res.status(400).json({ error: 'Audio required' });
@@ -249,7 +300,7 @@ app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
       durationSeconds: duration,
       fileSize:        audio.size
     });
-    console.log(`[ADMIN] ✅ Sound: "${doc.title}" (${doc.durationSeconds}s)`);
+    console.log(`[ADMIN] ✅ Sound: "${doc.title}" (${doc.durationSeconds}s, ${(audio.size/1024/1024).toFixed(1)}MB)`);
     res.json({ ok: true, item: doc });
   } catch (e) {
     console.error('[ADMIN] ❌ Create error:', e.message);
@@ -257,7 +308,7 @@ app.post('/api/sounds', soundUpload, uploadFields, async (req, res) => {
   }
 });
 
-app.put('/api/sounds/:id', soundUpload, uploadFields, async (req, res) => {
+app.put('/api/sounds/:id', soundUpload, uploadFields, handleUploadErrors, async (req, res) => {
   try {
     const doc = await Sound.findById(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Not found' });
@@ -297,11 +348,16 @@ app.delete('/api/sounds/:id', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '4.0', hasMusicMetadata: !!mm });
+  res.json({
+    status: 'ok',
+    version: '4.2',
+    hasMusicMetadata: !!mm,
+    maxUploadMB: MAX_FILE_SIZE_MB
+  });
 });
 
 // ============================================================
-// ADMIN PANEL — ONLY 4 FIELDS
+// ADMIN PANEL
 // ============================================================
 const ADMIN_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -349,7 +405,7 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 .file-hint{font-size:11px;color:#6b7280;margin-top:4px;display:block}
 .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:16px;border-top:1px solid #23262d}
 .empty{text-align:center;padding:60px 20px;color:#6b7280;font-size:14px}
-.toast{position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:14px 20px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;transform:translateY(20px);transition:all .3s;z-index:2000}
+.toast{position:fixed;bottom:24px;right:24px;background:#10b981;color:#fff;padding:14px 20px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;transform:translateY(20px);transition:all .3s;z-index:2000;max-width:320px}
 .toast.show{opacity:1;transform:translateY(0)}
 .toast.error{background:#ef4444}
 .spinner{display:inline-block;width:32px;height:32px;border:3px solid #23262d;border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite}
@@ -357,6 +413,7 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 .progress-bar{width:100%;height:6px;background:#23262d;border-radius:3px;overflow:hidden;margin-top:12px}
 .progress-fill{height:100%;background:#6366f1;width:0%;transition:width .3s}
 .duration-badge{background:#4f46e522;color:#a5b4fc;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600}
+.max-size-hint{color:#f59e0b;font-size:11px;margin-top:4px}
 @media(max-width:768px){.app{flex-direction:column}.sidebar{width:100%;flex-direction:row;padding:8px;overflow-x:auto}.logo{display:none}.nav-item{padding:10px 16px;border-left:none;border-bottom:3px solid transparent;white-space:nowrap}.nav-item.active{border-left:none;border-bottom-color:#a5b4fc}.main{padding:20px}}
 </style>
 </head>
@@ -370,14 +427,14 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
   <div class="main">
     <div class="page active" id="page-meditations">
       <div class="header">
-        <div><h1>Meditations</h1><div class="sub">Duration auto-detected from audio</div></div>
+        <div><h1>Meditations</h1><div class="sub">Duration auto-detected · Max 1 GB</div></div>
         <button class="btn btn-primary" onclick="openForm('meditation')">+ Add New</button>
       </div>
       <div id="grid-meditations" class="grid"><div class="empty"><div class="spinner"></div></div></div>
     </div>
     <div class="page" id="page-sounds">
       <div class="header">
-        <div><h1>Sounds</h1><div class="sub">Duration auto-detected from audio</div></div>
+        <div><h1>Sounds</h1><div class="sub">Duration auto-detected · Max 1 GB</div></div>
         <button class="btn btn-primary" onclick="openForm('sound')">+ Add New</button>
       </div>
       <div id="grid-sounds" class="grid"><div class="empty"><div class="spinner"></div></div></div>
@@ -409,9 +466,10 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
       </div>
 
       <div class="form-group">
-        <label>Audio File *</label>
+        <label>Audio File * (max 1 GB)</label>
         <input type="file" id="f-audio" accept="audio/*">
         <small class="file-hint" id="curr-audio"></small>
+        <small class="max-size-hint">Max 1 GB · Recommended: MP3 format</small>
       </div>
 
       <div class="progress-bar" id="prog-bar" style="display:none;"><div class="progress-fill" id="prog-fill"></div></div>
@@ -426,6 +484,7 @@ body{background:#0f1115;color:#e6e8eb;min-height:100vh}
 <div class="toast" id="toast"></div>
 <script>
 const API=window.location.origin;
+const MAX_MB = 1024;
 let data={meditations:[],sounds:[]};
 
 function switchPage(n,el){
@@ -499,6 +558,15 @@ document.getElementById('item-form').addEventListener('submit',async(e)=>{
   fd.append('description',document.getElementById('f-description').value);
   const audio=document.getElementById('f-audio').files[0];
   const thumb=document.getElementById('f-thumb').files[0];
+
+  // Client-side size check (1 GB audio, 5 MB image)
+  if(audio && audio.size > MAX_MB * 1024 * 1024){
+    return toast('Audio too large (max '+MAX_MB+' MB / 1 GB)', true);
+  }
+  if(thumb && thumb.size > 5 * 1024 * 1024){
+    return toast('Image too large (max 5 MB)', true);
+  }
+
   if(audio)fd.append('audio',audio);
   if(thumb)fd.append('thumbnail',thumb);
   if(!isEdit&&!audio)return toast('Audio file required',true);
@@ -510,7 +578,14 @@ document.getElementById('item-form').addEventListener('submit',async(e)=>{
   if(audio||thumb){pb.style.display='block';pf.style.width='0%';}
   const xhr=new XMLHttpRequest();
   xhr.open(isEdit?'PUT':'POST',url);
-  xhr.upload.onprogress=(ev)=>{if(ev.lengthComputable){pf.style.width=Math.round((ev.loaded/ev.total)*100)+'%';}};
+  xhr.timeout = 30 * 60 * 1000;   // 30 min timeout for large files
+  xhr.upload.onprogress=(ev)=>{
+    if(ev.lengthComputable){
+      const pct = Math.round((ev.loaded/ev.total)*100);
+      pf.style.width=pct+'%';
+      pt && (pt.textContent = pct+'%');
+    }
+  };
   xhr.onload=()=>{
     btn.disabled=false;btn.textContent='Save';
     let j={};try{j=JSON.parse(xhr.responseText);}catch(_){}
@@ -519,9 +594,17 @@ document.getElementById('item-form').addEventListener('submit',async(e)=>{
       toast(dur?'✓ Saved ('+fmtDur(dur)+')':'✓ Saved');
       closeModal();
       type==='meditation'?loadMeditations():loadSounds();
-    } else toast('Error: '+(j.error||xhr.statusText),true);
+    } else {
+      const err = j.error || xhr.statusText;
+      if(err.includes('too large') || xhr.status === 413){
+        toast('File too large (max 1 GB)', true);
+      } else {
+        toast('Error: '+err,true);
+      }
+    }
   };
   xhr.onerror=()=>{btn.disabled=false;btn.textContent='Save';toast('Network error',true);};
+  xhr.ontimeout=()=>{btn.disabled=false;btn.textContent='Save';toast('Upload timeout',true);};
   xhr.send(fd);
 });
 
@@ -535,7 +618,7 @@ async function del(type,id){
 function previewAudio(u){if(!u)return;new Audio(u).play().catch(()=>toast('Cannot play',true));}
 function fmtDur(s){if(!s)return '0:00';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;if(h>0)return h+':'+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0');return m+':'+String(x).padStart(2,'0');}
 function esc(s){return(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-let tt;function toast(m,err){const el=document.getElementById('toast');el.textContent=m;el.classList.toggle('error',err);el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),2500);}
+let tt;function toast(m,err){const el=document.getElementById('toast');el.textContent=m;el.classList.toggle('error',err);el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),3000);}
 
 loadMeditations();
 </script>
@@ -549,6 +632,7 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Serene v4.0 on port ${PORT}`);
+  console.log(`🚀 Serene v4.2 on port ${PORT}`);
   console.log(`📊 music-metadata: ${mm ? 'enabled' : 'fallback'}`);
+  console.log(`📦 Max upload: ${MAX_FILE_SIZE_MB} MB (1 GB)`);
 });
